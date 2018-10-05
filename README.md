@@ -38,7 +38,7 @@ A cluster will be created with default parameters
 - exciting auto-generated name, e.g. "fabulous-mushroom-1527688624"
 - 2x `m5.large` nodes (this instance type suits most common use-cases, and is good value for money)
 - use official AWS EKS AMI
-- `us-west-2` region
+- the region specified in your AWS shared config, AWS environment variable or the default of `us-west-2`
 - dedicated VPC (check your quotas)
 - using static AMI resolver
 
@@ -183,7 +183,7 @@ The `--node-ami` can take the AMI image id for an image to explicitly use. It al
 | Keyword | Description |
 | ------------ | -------------- |
 | static       | Indicates that the AMI images ids embedded into eksctl should be used. This relates to the static resolvers. |
-| auto        | Indicates that the AMI to use for the nodes should be found by querying AWS. This relates to the auto resolver. | 
+| auto        | Indicates that the AMI to use for the nodes should be found by querying AWS. This relates to the auto resolver. |
 
 If, for example, AWS release a new version of the EKS node AMIs and a new version of eksctl hasn't been released you can use the latest AMI by doing the following:
 
