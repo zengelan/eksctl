@@ -18,20 +18,28 @@ package v1alpha1
 
 import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	// kustomize "sigs.k8s.io/kustomize/pkg/types"
 )
 
-// EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
-// NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
+type ModuleSrource struct {
+	URL string `json:"url,omitempty"`
+	//Kustomizations *kustomize.Kustomization `json:"kustomizations"`
+	HelmTemplate *HelmTemplate `json:"helmTemplate"`
+}
+
+type HelmTemplate struct {
+	ChartDir string `json:"chartDir"`
+}
 
 // ModuleSpec defines the desired state of Module
 type ModuleSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
+	Source   ModuleSrource `json:"source"`
+	External bool          `json:"external,omitempty"`
 }
 
 // ModuleStatus defines the observed state of Module
 type ModuleStatus struct {
-	// INSERT ADDITIONAL STATUS FIELD - define observed state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
 }
 
