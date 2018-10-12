@@ -94,6 +94,12 @@
   revision = "cde06cfb39afcec8768c4beb83db1be6082eca8a"
 
 [[projects]]
+  branch = "master"
+  name = "github.com/errordeveloper/addons-api"
+  packages = ["pkg/apis/addons/v1alpha1"]
+  revision = "17ff53a5ea10dfd1297e9fd614c1efbbf9dd03d2"
+
+[[projects]]
   name = "github.com/fatih/color"
   packages = ["."]
   revision = "5b77d2a35fb0ede96d138fc9a99f5c9b6aef11b4"
@@ -717,9 +723,15 @@
   ]
   revision = "b1c446f8f34c13e27c4823b113fc87c7edb4f99c"
 
+[[projects]]
+  name = "sigs.k8s.io/controller-runtime"
+  packages = ["pkg/runtime/scheme"]
+  revision = "53fc44b56078cd095b11bd44cfa0288ee4cf718f"
+  version = "v0.1.4"
+
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "4aeffca6fcdd8a5531567d1966cd69d0a590b81b1bd63d5549db6810ec0e76f5"
+  inputs-digest = "43485d973cb314e65c20b35f01bef0b46cc49211d47e0e6055c2a39d5ca2bad1"
   solver-name = "gps-cdcl"
   solver-version = 1
