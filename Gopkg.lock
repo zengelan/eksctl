@@ -608,6 +608,7 @@
   revision = "12444147eb1150aa5c80d2aae532cbc5b7be73d0"
 
 [[projects]]
+  branch = "release-1.10"
   name = "k8s.io/apimachinery"
   packages = [
     "pkg/api/errors",
@@ -701,8 +702,8 @@
     "util/homedir",
     "util/integer"
   ]
-  revision = "169153f9d2d68e15f1fbe882897222e542ac50d7"
-  version = "kubernetes-1.10.8"
+  revision = "23781f4d6632d88e869066eaebb743857aa1ef9b"
+  version = "v7.0.0"
 
 [[projects]]
   branch = "master"
@@ -719,6 +720,6 @@
 [solve-meta]
   analyzer-name = "dep"
   analyzer-version = 1
-  inputs-digest = "2094a338d38095ba833633ee31ac880d24c5400d37b61e38b9a828998c2671ca"
+  inputs-digest = "4aeffca6fcdd8a5531567d1966cd69d0a590b81b1bd63d5549db6810ec0e76f5"
   solver-name = "gps-cdcl"
   solver-version = 1
