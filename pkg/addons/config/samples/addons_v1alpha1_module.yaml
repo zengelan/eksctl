@@ -1,9 +1,0 @@
-apiVersion: addons.eksctl.io/v1alpha1
-kind: Module
-metadata:
-  labels:
-    controller-tools.k8s.io: "1.0"
-  name: module-sample
-spec:
-  # Add fields here
-  foo: bar
