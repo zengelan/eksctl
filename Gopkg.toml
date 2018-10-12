@@ -26,16 +26,15 @@ required = [
 
 [[override]]
   name = "k8s.io/api"
-  version = "kubernetes-1.10.8"
-
+  branch = "release-1.10"
 
 [[constraint]]
   name = "k8s.io/apimachinery"
-  version = "kubernetes-1.10.8"
+  branch = "release-1.10"
 
 [[override]]
   name = "k8s.io/client-go"
-  version = "kubernetes-1.10.8"
+  version = "7.0.0"
 
 [[override]]
   name = "github.com/json-iterator/go"
