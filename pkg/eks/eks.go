@@ -3,6 +3,7 @@ package eks
 import (
 	"encoding/base64"
 	"fmt"
+	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 
 	api "github.com/weaveworks/eksctl/pkg/apis/eksctl.io/v1alpha4"
 	"github.com/weaveworks/eksctl/pkg/printers"
+	"github.com/weaveworks/eksctl/pkg/utils"
 	"github.com/weaveworks/eksctl/pkg/vpc"
 )
 
@@ -209,10 +211,39 @@ func (c *ClusterProvider) doGetCluster(clusterName string, printer printers.Outp
 
 // WaitForControlPlane waits till the control plane is ready
 func (c *ClusterProvider) WaitForControlPlane(id *api.ClusterMeta, clientSet *kubernetes.Clientset) error {
-	if _, err := clientSet.ServerVersion(); err == nil {
+	var chkForControlPlane = func() error {
+		if _, err := clientSet.ServerVersion(); err != nil {
+			return err
+		}
 		return nil
 	}
 
+	if utils.CheckAuthenticator != nil {
+		// need to fall back to http to verify the control plane
+		cluster, err := c.DescribeControlPlane(id)
+		if err != nil {
+			return errors.Wrap(err, "Trying to describe control plane")
+		}
+		verEndPoint := strings.Join([]string{*cluster.Endpoint, "version"}, "/")
+		logger.Debug("control plane endpoint = %v", verEndPoint)
+		chkForControlPlane = func() error {
+			res, err := http.Get(verEndPoint)
+			if err != nil {
+				return err
+			}
+			defer func() {
+				_ = res.Body.Close()
+			}()
+			if res.StatusCode >= 400 {
+				return fmt.Errorf("Control plane not ready: %v", res.Status)
+			}
+			return nil
+		}
+	}
+
+	if chkForControlPlane() == nil {
+		return nil
+	}
 	ticker := time.NewTicker(20 * time.Second)
 	defer ticker.Stop()
 
@@ -222,7 +253,7 @@ func (c *ClusterProvider) WaitForControlPlane(id *api.ClusterMeta, clientSet *ku
 	for {
 		select {
 		case <-ticker.C:
-			_, err := clientSet.ServerVersion()
+			err := chkForControlPlane()
 			if err == nil {
 				return nil
 			}

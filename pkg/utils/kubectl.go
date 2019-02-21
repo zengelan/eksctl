@@ -53,7 +53,7 @@ func CheckAllCommands(kubeconfigPath string, isContextSet bool, contextName stri
 		return err
 	}
 
-	if err := checkAuthenticator(); err != nil {
+	if err := CheckAuthenticator(); err != nil {
 		return err
 	}
 
@@ -101,9 +101,9 @@ var authenticatorCommands = []string{
 	legacyAuthenticatorCommand,
 }
 
-// checkAuthenticator checks if either of authenticator commands is in the path,
+// CheckAuthenticator checks if either of authenticator commands is in the path,
 // it returns an error when neither are found
-func checkAuthenticator() error {
+func CheckAuthenticator() error {
 	for _, cmd := range authenticatorCommands {
 		path, err := exec.LookPath(cmd)
 		if err == nil {
