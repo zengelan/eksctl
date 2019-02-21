@@ -1,6 +1,7 @@
 package eks
 
 import (
+	"crypto/tls"
 	"encoding/base64"
 	"fmt"
 	"net/http"
@@ -218,7 +219,7 @@ func (c *ClusterProvider) WaitForControlPlane(id *api.ClusterMeta, clientSet *ku
 		return nil
 	}
 
-	if utils.CheckAuthenticator != nil {
+	if err := utils.CheckAuthenticator(); err != nil {
 		// need to fall back to http to verify the control plane
 		cluster, err := c.DescribeControlPlane(id)
 		if err != nil {
@@ -226,8 +227,11 @@ func (c *ClusterProvider) WaitForControlPlane(id *api.ClusterMeta, clientSet *ku
 		}
 		verEndPoint := strings.Join([]string{*cluster.Endpoint, "version"}, "/")
 		logger.Debug("control plane endpoint = %v", verEndPoint)
+		tr := &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}
+
+		client := &http.Client{Transport: tr}
 		chkForControlPlane = func() error {
-			res, err := http.Get(verEndPoint)
+			res, err := client.Get(verEndPoint)
 			if err != nil {
 				return err
 			}
