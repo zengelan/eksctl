@@ -35,10 +35,6 @@ const (
 	rolesData    = "mapRoles"
 	accountsData = "mapAccounts"
 
-	// GroupMasters is the admin group which is also automatically
-	// granted to the IAM role that creates the cluster.
-	GroupMasters = "system:masters"
-
 	// RoleNodeGroupUsername is the default username for a nodegroup
 	// role mapping.
 	RoleNodeGroupUsername = "system:node:{{EC2PrivateDNSName}}"
@@ -137,19 +133,23 @@ func (a *AuthConfigMap) setAccounts(accounts []string) error {
 	return nil
 }
 
-// AddRole maps an IAM role to a k8s group dynamically. It modifies the
-// a role with given groups. If you are calling
-// this as part of node creation you should use DefaultNodeGroups.
+// AddRole maps an IAM role to a k8s group dynamically. If you are
+// calling this as part of node creation you should use
+// RoleNodeGroupUsername and RoleNodeGroupGroups.
 func (a *AuthConfigMap) AddRole(arn string, username string, groups []string) error {
 	roles, err := a.roles()
 	if err != nil {
 		return err
 	}
-	roles = append(roles, mapRole{
+	m := mapRole{
 		"rolearn":  arn,
-		"username": username,
 		"groups":   groups,
-	})
+	}
+	if username != "" {
+		m["username"] = username
+	}
+
+	roles = append(roles, m)
 	logger.Info("adding role %q to auth ConfigMap", arn)
 	return a.setRoles(roles)
 }
