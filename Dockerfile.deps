@@ -14,12 +14,15 @@ WORKDIR /src
 ENV CGO_ENABLED=0
 COPY install-build-deps.sh go.mod go.sum /src/
 
-# Install all go dependencies and remove the go caches in a single step to reduce the image footprint
-# (caches won't be used later on, we overwrite them by volume-mounting)
+# Download all the dependencies, for caching
+RUN go mod download
+
+# Install all go dependencies and remove the go build cache in a single step to reduce the image footprint
+# (the build cache won't be used later on, we overwrite it by volume-mounting)
 RUN ./install-build-deps.sh && \
     go install github.com/goreleaser/goreleaser && \
     go build github.com/kubernetes-sigs/aws-iam-authenticator/cmd/aws-iam-authenticator && \
-    rm -rf /root/.cache/go-build /go/pkg/mod
+    rm -rf /root/.cache/go-build
 
 
 

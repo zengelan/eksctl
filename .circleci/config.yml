@@ -31,7 +31,6 @@ jobs:
             key: go-cache-{{ .Branch }}-{{ .Revision }}
             paths:
                 - "/home/circleci/.cache/go-build/"
-                - "/home/circleci/go/pkg/mod/"
       - store_test_results:
           path: ./test-results
       - store_artifacts:

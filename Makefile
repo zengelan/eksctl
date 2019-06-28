@@ -4,7 +4,7 @@ git_commit := $(shell git describe --dirty --always)
 version_pkg := github.com/weaveworks/eksctl/pkg/version
 
 # The dependencies version should be bumped every time the build dependencies are updated
-EKSCTL_DEPENDENCIES_IMAGE ?= weaveworks/eksctl-build:deps-0.4
+EKSCTL_DEPENDENCIES_IMAGE ?= weaveworks/eksctl-build:deps-0.5
 EKSCTL_BUILDER_IMAGE ?= weaveworks/eksctl-builder:latest
 EKSCTL_IMAGE ?= weaveworks/eksctl:latest
 
@@ -180,7 +180,7 @@ eksctl-deps-image: ## Create a cache image with dependencies
 .PHONY: eksctl-image
 eksctl-image: eksctl-deps-image## Create the eksctl image
 	time docker run -t --name eksctl-builder -e TEST_TARGET=$(TEST_TARGET) \
-	  -v "${PWD}":/src -v "$$(go env GOCACHE):/root/.cache/go-build" -v "$$(go env GOPATH)/pkg/mod:/go/pkg/mod" \
+	  -v "${PWD}":/src -v "$$(go env GOCACHE):/root/.cache/go-build" \
           $(EKSCTL_DEPENDENCIES_IMAGE) /src/eksctl-image-builder.sh || ( docker rm eksctl-builder; exit 1 )
 	time docker commit eksctl-builder $(EKSCTL_BUILDER_IMAGE) && docker rm eksctl-builder
 	docker build --tag $(EKSCTL_IMAGE) .
