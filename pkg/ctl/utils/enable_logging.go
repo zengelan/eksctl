@@ -50,17 +50,10 @@ func doEnableLogging(rc *cmdutils.ResourceCmd, logTypesToEnable []string, logTyp
 		return err
 	}
 
-	var toEnable, toDisable []string
-	var err error
-	if len(c.CloudWatch.ClusterLogging.EnableTypes) > 0 {
-		// config file
-		toEnable = rc.ClusterConfig.CloudWatch.ClusterLogging.EnableTypes
-	} else {
-		toEnable, toDisable, err = processTypesToEnable(logTypesToEnable, logTypesToDisable)
-		if err != nil {
+	if len(logTypesToEnable) > 0 || len(logTypesToDisable) > 0 {
+		if err := validateLoggingFlags(logTypesToEnable, logTypesToDisable); err != nil {
 			return err
 		}
-		rc.ClusterConfig.AppendClusterCloudWatchLogTypes(toEnable...)
 	}
 
 	cfg := rc.ClusterConfig
@@ -85,18 +78,16 @@ func doEnableLogging(rc *cmdutils.ResourceCmd, logTypesToEnable []string, logTyp
 		return err
 	}
 
-	// willBeEnabled = currentlyEnabled - toDisable + toEnable
-	willBeEnabled := sets.NewString(currentlyEnabled.List()...)
-	if cfg.HasClusterCloudWatchLogging() {
-		willBeEnabled.Insert(cfg.CloudWatch.ClusterLogging.EnableTypes...)
+	var willBeEnabled sets.String
+	if len(cfg.CloudWatch.ClusterLogging.EnableTypes) > 0 {
+		willBeEnabled = sets.NewString(cfg.CloudWatch.ClusterLogging.EnableTypes...)
 	}
-	willBeEnabled.Delete(toDisable...)
+	if len(logTypesToEnable) > 0 || len(logTypesToDisable) > 0 {
+		toEnable := processTypesToEnable(currentlyEnabled.List(), logTypesToEnable, logTypesToDisable)
+		willBeEnabled.Insert(toEnable...)
+	}
 
-	cfg.CloudWatch.ClusterLogging.EnableTypes = willBeEnabled.List()
-
-	// willBeDisabled = all - willBeEnabled
 	willBeDisabled := sets.NewString(api.SupportedCloudWatchClusterLogTypes()...).Difference(willBeEnabled)
-
 	updateRequired := !currentlyEnabled.Equal(willBeEnabled)
 
 	if err = printer.LogObj(logger.Debug, "cfg.json = \\\n%s\n", cfg); err != nil {
