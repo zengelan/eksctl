@@ -46,14 +46,21 @@ func enableLoggingCmd(rc *cmdutils.ResourceCmd) {
 }
 
 func doEnableLogging(rc *cmdutils.ResourceCmd, logTypesToEnable []string, logTypesToDisable []string) error {
-	toEnable, toDisable, err := processTypesToEnable(logTypesToEnable, logTypesToDisable)
-	if err != nil {
-		return err
-	}
-	rc.ClusterConfig.AppendClusterCloudWatchLogTypes(toEnable...)
-
 	if err := cmdutils.NewUtilsEnableLoggingLoader(rc).Load(); err != nil {
 		return err
+	}
+
+	var toEnable, toDisable []string
+	var err error
+	if len(c.CloudWatch.ClusterLogging.EnableTypes) > 0 {
+		// config file
+		toEnable = rc.ClusterConfig.CloudWatch.ClusterLogging.EnableTypes
+	} else {
+		toEnable, toDisable, err = processTypesToEnable(logTypesToEnable, logTypesToDisable)
+		if err != nil {
+			return err
+		}
+		rc.ClusterConfig.AppendClusterCloudWatchLogTypes(toEnable...)
 	}
 
 	cfg := rc.ClusterConfig
@@ -124,14 +131,14 @@ func doEnableLogging(rc *cmdutils.ResourceCmd, logTypesToEnable []string, logTyp
 	return nil
 }
 
-func processTypesToEnable(toEnable []string, toDisable []string) ([]string, []string, error) {
+func validateLoggingFlags(toEnable []string, toDisable []string) error {
 	// TODO possibly separate validation from transformation in two separate functions
 	emptyToEnable := toEnable == nil || len(toEnable) == 0
 	emptyToDisable := toDisable == nil || len(toDisable) == 0
 
 	// At least enable-types or disable-types should be provided
 	if emptyToEnable && emptyToDisable {
-		return nil, nil, fmt.Errorf("at least one flag has to be provided: --enable-types, --disable-types")
+		return fmt.Errorf("at least one flag has to be provided: --enable-types, --disable-types")
 	}
 
 	isEnableAll := !emptyToEnable && toEnable[0] == "all"
@@ -139,30 +146,17 @@ func processTypesToEnable(toEnable []string, toDisable []string) ([]string, []st
 
 	// Can't enable all and disable all
 	if isDisableAll && isEnableAll {
-		return nil, nil, fmt.Errorf("cannot use `all` for both --enable-types and --disable-types at the same time")
-	}
-
-	// When all is provided in one of the options
-	if isEnableAll {
-		toDisableSet := sets.NewString(toDisable...)
-		toEnableSet := sets.NewString(api.SupportedCloudWatchClusterLogTypes()...).Difference(toDisableSet)
-		return toEnableSet.List(), toDisableSet.List(), nil
-	}
-	if isDisableAll {
-		toEnableSet := sets.NewString(toEnable...)
-		toDisableSet := sets.NewString(api.SupportedCloudWatchClusterLogTypes()...).Difference(toEnableSet)
-		return toEnableSet.List(), toDisableSet.List(), nil
+		return fmt.Errorf("cannot use `all` for both --enable-types and --disable-types at the same time")
 	}
 
 	// Check all are valid values
 	// TODO if this is too restrictive we can drop it
 	if err := checkAllTypesAreSupported(toEnable); err != nil {
-		return nil, nil, err
+		return err
 	}
 	if err := checkAllTypesAreSupported(toDisable); err != nil {
-		return nil, nil, err
+		return err
 	}
-
 	// both options are provided but without "all"
 	toEnableSet := sets.NewString(toEnable...)
 	toDisableSet := sets.NewString(toDisable...)
@@ -170,10 +164,35 @@ func processTypesToEnable(toEnable []string, toDisable []string) ([]string, []st
 	appearInBoth := toEnableSet.Intersection(toDisableSet)
 
 	if appearInBoth.Len() != 0 {
-		return nil, nil, fmt.Errorf("log types cannot be part of --enable-types and --disable-types simultaneously")
+		return fmt.Errorf("log types cannot be part of --enable-types and --disable-types simultaneously")
 	}
-	return toEnableSet.List(), toDisableSet.List(), nil
+	return nil
+}
 
+func processTypesToEnable(existingEnabled []string, toEnable []string, toDisable []string) []string {
+	// TODO possibly separate validation from transformation in two separate functions
+	emptyToEnable := toEnable == nil || len(toEnable) == 0
+	emptyToDisable := toDisable == nil || len(toDisable) == 0
+
+	isEnableAll := !emptyToEnable && toEnable[0] == "all"
+	isDisableAll := !emptyToDisable && toDisable[0] == "all"
+
+	// When all is provided in one of the options
+	if isDisableAll {
+		return toEnable
+	}
+	if isEnableAll {
+		toDisableSet := sets.NewString(toDisable...)
+		toEnableSet := sets.NewString(api.SupportedCloudWatchClusterLogTypes()...).Difference(toDisableSet)
+		return toEnableSet.List()
+	}
+
+	// willEnable = existing - toDisable + toEnable
+	willEnable := sets.NewString(existingEnabled...)
+	willEnable.Delete(toDisable...)
+	willEnable.Insert(toEnable...)
+
+	return willEnable.List()
 }
 
 func checkAllTypesAreSupported(logTypes []string) error {
