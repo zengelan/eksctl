@@ -123,7 +123,6 @@ func doEnableLogging(rc *cmdutils.ResourceCmd, logTypesToEnable []string, logTyp
 }
 
 func validateLoggingFlags(toEnable []string, toDisable []string) error {
-	// TODO possibly separate validation from transformation in two separate functions
 	emptyToEnable := toEnable == nil || len(toEnable) == 0
 	emptyToDisable := toDisable == nil || len(toDisable) == 0
 
@@ -161,7 +160,6 @@ func validateLoggingFlags(toEnable []string, toDisable []string) error {
 }
 
 func processTypesToEnable(existingEnabled []string, toEnable []string, toDisable []string) []string {
-	// TODO possibly separate validation from transformation in two separate functions
 	emptyToEnable := toEnable == nil || len(toEnable) == 0
 	emptyToDisable := toDisable == nil || len(toDisable) == 0
 
