@@ -176,7 +176,7 @@ func repoURLForQuickstart(quickstartArgument string) (string, error) {
 	}
 	if quickstartArgument == "app-dev" {
 		// FIXME rename to eks-quickstart-app-dev once the repo is renamed
-		return "git@github.com:weaveworks/eks-gitops-example.git", nil
+		return "https://github.com/weaveworks/eks-gitops-example.git", nil
 	}
 	return "", fmt.Errorf("invalid URL or unknown Quick Start %s ", quickstartArgument)
 }
