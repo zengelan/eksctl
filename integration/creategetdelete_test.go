@@ -123,32 +123,6 @@ var _ = Describe("(Integration) Create, Get, Scale & Delete", func() {
 			})
 		})
 
-		Context("and configuring Flux for GitOps", func() {
-			It("should not return an error", func() {
-				// Use a random branch to ensure test runs don't step on each others.
-				branch := namer.RandomName()
-				cloneDir, err := createBranch(branch)
-				Expect(err).ShouldNot(HaveOccurred())
-				defer deleteBranch(branch, cloneDir)
-
-				assertFluxManifestsAbsentInGit(branch)
-				assertFluxPodsAbsentInKubernetes(kubeconfigPath)
-
-				cmd := eksctlExperimentalCmd.WithArgs(
-					"install", "flux",
-					"--git-url", Repository,
-					"--git-email", Email,
-					"--git-private-ssh-key-path", privateSSHKeyPath,
-					"--git-branch", branch,
-					"--name", clusterName,
-				)
-				Expect(cmd).To(RunSuccessfully())
-
-				assertFluxManifestsPresentInGit(branch)
-				assertFluxPodsPresentInKubernetes(kubeconfigPath)
-			})
-		})
-
 		Context("gitops apply", func() {
 			It("should add quickstart to the repo and the cluster", func() {
 				// Use a random branch to ensure test runs don't step on each others.
@@ -165,20 +139,20 @@ var _ = Describe("(Integration) Create, Get, Scale & Delete", func() {
 
 				cmd := eksctlExperimentalCmd.WithArgs(
 					"gitops", "apply",
-						"--git-url", Repository,
-						"--git-email", Email,
-						"--git-branch", branch,
-						"--git-private-ssh-key-path", privateSSHKeyPath,
-						"--output-path", tempOutputDir,
-						"--quickstart-profile", "app-dev",
-						"--cluster", clusterName,
-						"--region", region,
+					"--git-url", Repository,
+					"--git-email", Email,
+					"--git-branch", branch,
+					"--git-private-ssh-key-path", privateSSHKeyPath,
+					"--output-path", tempOutputDir,
+					"--quickstart-profile", "app-dev",
+					"--cluster", clusterName,
+					"--region", region,
 				)
 				Expect(cmd).To(RunSuccessfully())
 
-				assertQuickStartComponentsPresentInGit(branch)
 				assertFluxManifestsPresentInGit(branch)
 				assertFluxPodsPresentInKubernetes(kubeconfigPath)
+				assertQuickStartComponentsPresentInGit(branch)
 			})
 		})
 
@@ -234,7 +208,7 @@ var _ = Describe("(Integration) Create, Get, Scale & Delete", func() {
 				}
 				{
 					cmd := eksctlGetCmd.WithArgs(
-						 "nodegroup",
+						"nodegroup",
 						"--cluster", clusterName,
 						"--region", region,
 						testNG,
