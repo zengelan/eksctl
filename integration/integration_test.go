@@ -4,7 +4,6 @@ package integration_test
 
 import (
 	"flag"
-	"fmt"
 	"testing"
 	"time"
 
@@ -52,7 +51,7 @@ func init() {
 	flag.BoolVar(&doCreate, "eksctl.create", true, "Skip the creation tests. Useful for debugging the tests")
 	flag.BoolVar(&doDelete, "eksctl.delete", true, "Skip the cleanup after the tests have run")
 	flag.StringVar(&kubeconfigPath, "eksctl.kubeconfig", "", "Path to kubeconfig (default: create it a temporary file)")
-	flag.StringVar(&privateSSHKeyPath, "eksctl.git.sshkeypath", defaultPrivateSSHKeyPath, fmt.Sprintf("Path to the SSH key to use for Git operations (default: %s)", defaultPrivateSSHKeyPath))
+	flag.StringVar(&privateSSHKeyPath, "eksctl.git.sshkeypath", defaultPrivateSSHKeyPath, "Path to the SSH key to use for Git operations")
 
 	eksctlCmd = runner.NewCmd(eksctlPath).
 		WithArgs("--region", region).
