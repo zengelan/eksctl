@@ -110,14 +110,15 @@ func doApplyGitops(cmd *cmdutils.Cmd, opts options) error {
 
 	// Create the flux installer. It will clone the user's repository in the outputPath
 	fluxOpts := flux.InstallOpts{
-		GitURL:      opts.gitOptions.URL,
-		GitBranch:   opts.gitOptions.Branch,
-		GitEmail:    opts.gitOptions.Email,
-		GitUser:     opts.gitOptions.User,
-		Namespace:   "flux",
-		GitFluxPath: "flux/",
-		WithHelm:    true,
-		Timeout:     git.DefaultGitTimeout,
+		GitURL:               opts.gitOptions.URL,
+		GitBranch:            opts.gitOptions.Branch,
+		GitEmail:             opts.gitOptions.Email,
+		GitUser:              opts.gitOptions.User,
+		GitPrivateSSHKeyPath: opts.gitPrivateSSHKeyPath,
+		Namespace:            "flux",
+		GitFluxPath:          "flux/",
+		WithHelm:             true,
+		Timeout:              git.DefaultGitTimeout,
 	}
 	fluxInstaller := flux.NewInstaller(context.Background(), k8sRestConfig, k8sClientSet, &fluxOpts)
 
