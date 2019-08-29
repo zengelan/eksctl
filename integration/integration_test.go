@@ -26,18 +26,12 @@ var (
 
 	kubeconfigTemp bool
 	testDirectory  = "test_profile"
-	// privateSSHKeyPath is the SSH key to use for Git operations.
-	privateSSHKeyPath string
 
 	eksctlCmd, eksctlCreateCmd, eksctlGetCmd, eksctlDeleteCmd runner.Cmd
 
 	eksctlDeleteClusterCmd, eksctlScaleNodeGroupCmd runner.Cmd
 
 	eksctlUtilsCmd, eksctlExperimentalCmd runner.Cmd
-)
-
-const (
-	defaultPrivateSSHKeyPath = "~/.ssh/eksctl-bot_id_rsa"
 )
 
 func init() {
@@ -51,7 +45,6 @@ func init() {
 	flag.BoolVar(&doCreate, "eksctl.create", true, "Skip the creation tests. Useful for debugging the tests")
 	flag.BoolVar(&doDelete, "eksctl.delete", true, "Skip the cleanup after the tests have run")
 	flag.StringVar(&kubeconfigPath, "eksctl.kubeconfig", "", "Path to kubeconfig (default: create it a temporary file)")
-	flag.StringVar(&privateSSHKeyPath, "eksctl.git.sshkeypath", defaultPrivateSSHKeyPath, "Path to the SSH key to use for Git operations")
 
 	eksctlCmd = runner.NewCmd(eksctlPath).
 		WithArgs("--region", region).

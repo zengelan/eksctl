@@ -23,8 +23,6 @@ import (
 const (
 	// Namespace is the default Kubernetes namespace under which to install Flux.
 	Namespace = "flux"
-	// Repository is the default testing Git repository.
-	Repository = "git@github.com:eksctl-bot/my-gitops-repo.git"
 	// Email is the default testing Git email.
 	Email = "eksctl-bot@weave.works"
 	// Name is the default cluster name to test against.
@@ -33,34 +31,12 @@ const (
 	Region = "ap-northeast-1"
 )
 
-func createBranch(branch string) (string, error) {
-	cloneDir, err := ioutil.TempDir(os.TempDir(), "eksctl-install-flux-test-clone-")
-	if err != nil {
-		return "", fmt.Errorf("failed to create temporary directory: %s", err)
-	}
-	if err := gitWith(gitParams{Args: []string{"clone", "-b", "master", Repository, cloneDir}, Dir: cloneDir, Env: gitSSHCommand()}); err != nil {
-		return "", err
-	}
-	if err := gitWith(gitParams{Args: []string{"checkout", "-b", branch}, Dir: cloneDir, Env: gitSSHCommand()}); err != nil {
-		return "", err
-	}
-	if err := gitWith(gitParams{Args: []string{"push", "origin", branch}, Dir: cloneDir, Env: gitSSHCommand()}); err != nil {
-		return "", err
-	}
-	return cloneDir, nil
-}
-
-func deleteBranch(branch, cloneDir string) error {
-	defer os.RemoveAll(cloneDir)
-	return gitWith(gitParams{Args: []string{"push", "origin", "--delete", branch}, Dir: cloneDir, Env: gitSSHCommand()})
-}
-
-func getBranch(branch string) (string, error) {
+func clone(privateKeyPath string, repository string) (string, error) {
 	cloneDir, err := ioutil.TempDir(os.TempDir(), "eksctl-install-flux-test-branch-")
 	if err != nil {
 		return "", fmt.Errorf("failed to create temporary directory: %s", err)
 	}
-	if err := gitWith(gitParams{Args: []string{"clone", "-b", branch, Repository, cloneDir}, Dir: cloneDir, Env: gitSSHCommand()}); err != nil {
+	if err := gitWith(gitParams{Args: []string{"clone", repository, cloneDir}, Dir: cloneDir, Env: gitSSHCommand(privateKeyPat)}); err != nil {
 		return "", err
 	}
 	return cloneDir, nil
@@ -92,19 +68,19 @@ func gitWith(params gitParams) error {
 	return gitCmd.Run()
 }
 
-func gitSSHCommand() []string {
+func gitSSHCommand(privateSSHKeyPath string) []string {
 	return []string{fmt.Sprintf("GIT_SSH_COMMAND=ssh -i %s", privateSSHKeyPath)}
 }
 
-func assertFluxManifestsAbsentInGit(branch string) {
-	dir, err := getBranch(branch)
+func assertFluxManifestsAbsentInGit(privateSSHKeyPath string, url string) {
+	dir, err := clone(privateSSHKeyPath, url)
 	defer os.RemoveAll(dir)
 	Expect(err).ShouldNot(HaveOccurred())
 	assertDoesNotContainFluxDir(dir)
 }
 
-func assertFluxManifestsPresentInGit(branch string) {
-	dir, err := getBranch(branch)
+func assertFluxManifestsPresentInGit(privateSSHKeyPath string, url string) {
+	dir, err := clone(privateSSHKeyPath, url)
 	defer os.RemoveAll(dir)
 	Expect(err).ShouldNot(HaveOccurred())
 	assertContainsFluxDir(dir)

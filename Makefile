@@ -116,7 +116,8 @@ integration-test-dev: build-integration-test ## Run the integration tests withou
 		-eksctl.cluster=$(TEST_CLUSTER) \
 		-eksctl.create=false \
 		-eksctl.delete=false \
-		-eksctl.kubeconfig=$(HOME)/.kube/eksctl/clusters/$(TEST_CLUSTER)
+		-eksctl.kubeconfig=$(HOME)/.kube/eksctl/clusters/$(TEST_CLUSTER) \
+		-eksctl.region=eu-north-1
 
 create-integration-test-dev-cluster: build ## Create a test cluster for use when developing integration tests
 	./eksctl create cluster --name=integration-test-dev --auto-kubeconfig --nodes=1 --nodegroup-name=ng-0

@@ -125,24 +125,24 @@ var _ = Describe("(Integration) Create, Get, Scale & Delete", func() {
 
 		Context("gitops apply", func() {
 			It("should add quickstart to the repo and the cluster", func() {
-				// Use a random branch to ensure test runs don't step on each others.
-				branch := namer.RandomName()
-				cloneDir, err := createBranch(branch)
+				// Set up test infrastrucutre
+				keyPair, err := NewSSHKeyPair()
 				Expect(err).ShouldNot(HaveOccurred())
-				defer deleteBranch(branch, cloneDir)
-
+				gitServer, err := NewGitServer(kubeconfigPath, namer.RandomName(), keyPair.PublicKeyPath)
+				Expect(err).ShouldNot(HaveOccurred())
+				defer gitServer.Delete()
 				tempOutputDir, err := ioutil.TempDir(os.TempDir(), "gitops-repo-")
-				assertFluxManifestsAbsentInGit(branch)
+				defer os.RemoveAll(tempOutputDir)
 
+				assertFluxManifestsAbsentInGit(keyPair.PrivateKeyPath, gitServer.RepoURL)
 				deleteFluxInstallation(kubeconfigPath)
 				assertFluxPodsAbsentInKubernetes(kubeconfigPath)
 
 				cmd := eksctlExperimentalCmd.WithArgs(
 					"gitops", "apply",
-					"--git-url", Repository,
+					"--git-url", gitServer.RepoURL,
 					"--git-email", Email,
-					"--git-branch", branch,
-					"--git-private-ssh-key-path", privateSSHKeyPath,
+					"--git-private-ssh-key-path", keyPair.PrivateKeyPath,
 					"--output-path", tempOutputDir,
 					"--quickstart-profile", "app-dev",
 					"--cluster", clusterName,
@@ -150,9 +150,12 @@ var _ = Describe("(Integration) Create, Get, Scale & Delete", func() {
 				)
 				Expect(cmd).To(RunSuccessfully())
 
-				assertFluxManifestsPresentInGit(branch)
+				// updateFluxGitCredentials(gitServer.AuthorizedSSHPrivateKeyPath, gitServer.Hostname, gitServer.ServerFingerPrints)
+
+				assertFluxManifestsPresentInGit(keyPair.PrivateKeyPath, gitServer.RepoURL)
 				assertFluxPodsPresentInKubernetes(kubeconfigPath)
-				assertQuickStartComponentsPresentInGit(branch)
+				assertQuickStartComponentsPresentInGit(keyPair.PrivateKeyPath, gitServer.RepoURL)
+				// assertQuickStartComponentsPresentInKubernetes(kubeconfigPath)
 			})
 		})
 
