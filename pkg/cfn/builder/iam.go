@@ -364,6 +364,23 @@ func (n *NodeGroupResourceSet) addResourcesForIAM() {
 		)
 	}
 
+	if api.IsEnabled(n.spec.IAM.WithAddonPolicies.CloudMap) {
+		n.rs.attachAllowPolicy("PolicyCloudMap", refIR, "*",
+			[]string{
+				"servicediscovery:CreateService",
+				"servicediscovery:GetService",
+				"servicediscovery:RegisterInstance",
+				"servicediscovery:DeregisterInstance",
+				"servicediscovery:ListInstances",
+				"route53:GetHealthCheck",
+				"route53:CreateHealthCheck",
+				"route53:UpdateHealthCheck",
+				"route53:ChangeResourceRecordSets",
+				"route53:DeleteHealthCheck",
+			},
+		)
+	}
+
 	n.rs.defineOutputFromAtt(outputs.NodeGroupInstanceProfileARN, "NodeInstanceProfile.Arn", true, func(v string) error {
 		n.spec.IAM.InstanceProfileARN = v
 		return nil

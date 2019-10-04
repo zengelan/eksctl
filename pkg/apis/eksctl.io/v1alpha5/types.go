@@ -429,6 +429,7 @@ func NewNodeGroup() *NodeGroup {
 				ALBIngress:   Disabled(),
 				XRay:         Disabled(),
 				CloudWatch:   Disabled(),
+				CloudMap:     Disabled(),
 			},
 		},
 		SSH: &NodeGroupSSH{
@@ -582,6 +583,8 @@ type (
 		XRay *bool `json:"xRay"`
 		// +optional
 		CloudWatch *bool `json:"cloudWatch"`
+		// +optional
+		CloudMap *bool `json:"cloudMap"`
 	}
 
 	// NodeGroupSSH holds all the ssh access configuration to a NodeGroup

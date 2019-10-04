@@ -245,6 +245,9 @@ func validateNodeGroupIAM(i int, ng *NodeGroup, value, fieldName, path string) e
 		if IsEnabled(ng.IAM.WithAddonPolicies.CloudWatch) {
 			return fmtFieldConflictErr(prefix + "cloudWatch")
 		}
+		if IsEnabled(ng.IAM.WithAddonPolicies.CloudMap) {
+			return fmtFieldConflictErr(prefix + "cloudMap")
+		}
 	}
 	return nil
 }

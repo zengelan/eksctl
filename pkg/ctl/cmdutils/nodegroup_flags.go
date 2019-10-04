@@ -59,11 +59,13 @@ func AddCommonCreateNodeGroupIAMAddonsFlags(fs *pflag.FlagSet, ng *api.NodeGroup
 	ng.IAM.WithAddonPolicies.ALBIngress = new(bool)
 	ng.IAM.WithAddonPolicies.XRay = new(bool)
 	ng.IAM.WithAddonPolicies.CloudWatch = new(bool)
+	ng.IAM.WithAddonPolicies.CloudMap = new(bool)
 	fs.BoolVar(ng.IAM.WithAddonPolicies.AutoScaler, "asg-access", false, "enable IAM policy for cluster-autoscaler")
 	fs.BoolVar(ng.IAM.WithAddonPolicies.ExternalDNS, "external-dns-access", false, "enable IAM policy for external-dns")
 	fs.BoolVar(ng.IAM.WithAddonPolicies.ImageBuilder, "full-ecr-access", false, "enable full access to ECR")
 	fs.BoolVar(ng.IAM.WithAddonPolicies.AppMesh, "appmesh-access", false, "enable full access to AppMesh")
 	fs.BoolVar(ng.IAM.WithAddonPolicies.ALBIngress, "alb-ingress-access", false, "enable full access for alb-ingress-controller")
+	fs.BoolVar(ng.IAM.WithAddonPolicies.CloudMap, "cloudmap-access", false, "enable IAM policy for CloudMap service discovery support for aws-app-mesh-controller-for-k8s")
 }
 
 // AddNodeGroupFilterFlags add common `--include` and `--exclude` flags for filtering nodegroups

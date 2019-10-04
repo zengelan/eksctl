@@ -630,6 +630,11 @@ func (in *NodeGroupIAMAddonPolicies) DeepCopyInto(out *NodeGroupIAMAddonPolicies
 		*out = new(bool)
 		**out = **in
 	}
+	if in.CloudMap != nil {
+		in, out := &in.CloudMap, &out.CloudMap
+		*out = new(bool)
+		**out = **in
+	}
 	return
 }
 
