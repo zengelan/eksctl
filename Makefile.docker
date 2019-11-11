@@ -70,7 +70,7 @@ intermediate-image: build-image ## Build the intermediate image that has all art
 	time docker run \
 	  --tty \
 	  --name=$(intermidiate_container_name) \
-	  --volume=$(git_toplevel):/src \
+	  --volume=$(project_basedir):/src \
 	    $(build_image_name) /src/eksctl-image-builder.sh \
 	  || (docker rm $(intermidiate_container_name) ; exit 1)
 	time docker commit $(intermidiate_container_name) $(intermediate_image_name) \
@@ -88,14 +88,14 @@ build test: ## Run targets from Makefile using the build image
 	time docker run \
 	  --tty \
 	  --rm \
-	  --volume=$(git_toplevel):/src \
+	  --volume=$(project_basedir):/src \
 	    $(build_image_name) make $@
 
 docker_run_release_script = docker run \
   --env=GITHUB_TOKEN \
   --env=CIRCLE_TAG \
   --env=CIRCLE_PROJECT_USERNAME \
-  --volume=$(git_toplevel):/src \
+  --volume=$(project_basedir):/src \
   --workdir=/src \
     $(intermediate_image_name)
 
