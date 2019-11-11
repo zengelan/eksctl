@@ -142,7 +142,7 @@ delete-integration-test-dev-cluster: build ## Delete the test cluster for use wh
 ##@ Code Generation
 
 .PHONY: generate-always
-generate-always: ## Generate code (required for every build)
+generate-always: $(generated_code_deep_copy_helper) ## Generate code (required for every build)
 	@# go-bindata targets must run every time, as dependencies are too complex to declare in make:
 	@# - deleting an asset is breaks the dependencies
 	@# - different version of go-bindata generate different code
