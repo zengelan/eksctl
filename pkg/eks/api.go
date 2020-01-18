@@ -334,9 +334,9 @@ func (c *ClusterProvider) SetAvailabilityZones(spec *api.ClusterConfig, given []
 
 	logger.Debug("determining availability zones")
 	azSelector := az.NewSelectorWithDefaults(c.Provider.EC2())
-	if c.Provider.Region() == api.RegionUSEast1 {
-		azSelector = az.NewSelectorWithMinRequired(c.Provider.EC2())
-	}
+	// if c.Provider.Region() == api.RegionUSEast1 {
+	// 	azSelector = az.NewSelectorWithMinRequired(c.Provider.EC2())
+	// }
 	zones, err := azSelector.SelectZones(c.Provider.Region())
 	if err != nil {
 		return errors.Wrap(err, "getting availability zones")
