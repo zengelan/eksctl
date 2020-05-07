@@ -58,22 +58,35 @@ func (c *StackCollection) DescribeClusterStack() (*Stack, error) {
 }
 
 // RefreshFargatePodExecutionRoleARN reads the CloudFormation stacks and
-// their output values, and set the Fargate pod execution role ARN to
+// their output values, and sets the Fargate pod execution role ARN to
 // the ClusterConfig.
 func (c *StackCollection) RefreshFargatePodExecutionRoleARN() error {
+	fargateOutputs := map[string]outputs.Collector{
+		outputs.FargatePodExecutionRoleARN: func(v string) error {
+			c.spec.IAM.FargatePodExecutionRoleARN = &v
+			return nil
+		},
+	}
 	stack, err := c.DescribeClusterStack()
 	if err != nil {
 		return err
 	}
-	return outputs.Collect(*stack,
-		map[string]outputs.Collector{
-			outputs.FargatePodExecutionRoleARN: func(v string) error {
-				c.spec.IAM.FargatePodExecutionRoleARN = &v
-				return nil
-			},
-		},
-		nil,
-	)
+	if err := outputs.Collect(*stack, nil, fargateOutputs); err != nil {
+		return err
+	}
+
+	if c.spec.IAM.FargatePodExecutionRoleARN == nil {
+		logger.Info("Fargate pod execution role is missing, fixing cluster stack to add Fargate resources")
+		if err := c.FixClusterCompatibility(); err != nil {
+			return errors.Wrap(err, "error fixing cluster compatibility")
+		}
+	}
+
+	stack, err = c.DescribeClusterStack()
+	if err != nil {
+		return err
+	}
+	return outputs.Collect(*stack, fargateOutputs, nil)
 }
 
 // AppendNewClusterStackResource will update cluster
@@ -94,6 +107,7 @@ func (c *StackCollection) AppendNewClusterStackResource(plan, supportsManagedNod
 
 	currentResources := gjson.Get(currentTemplate, resourcesRootPath)
 	currentOutputs := gjson.Get(currentTemplate, outputsRootPath)
+	currentMappings := gjson.Get(currentTemplate, mappingsRootPath)
 	if !currentResources.IsObject() || !currentOutputs.IsObject() {
 		return false, fmt.Errorf("unexpected template format of the current stack ")
 	}
@@ -112,7 +126,8 @@ func (c *StackCollection) AppendNewClusterStackResource(plan, supportsManagedNod
 
 	newResources := gjson.Get(string(newTemplate), resourcesRootPath)
 	newOutputs := gjson.Get(string(newTemplate), outputsRootPath)
-	if !newResources.IsObject() || !newOutputs.IsObject() {
+	newMappings := gjson.Get(string(newTemplate), mappingsRootPath)
+	if !newResources.IsObject() || !newOutputs.IsObject() || !newMappings.IsObject() {
 		return false, errors.New("unexpected template format of the new version of the stack")
 	}
 
@@ -133,6 +148,7 @@ func (c *StackCollection) AppendNewClusterStackResource(plan, supportsManagedNod
 	var (
 		addResources []string
 		addOutputs   []string
+		addMappings  []string
 	)
 
 	newResources.ForEach(func(k, v gjson.Result) bool {
@@ -148,7 +164,14 @@ func (c *StackCollection) AppendNewClusterStackResource(plan, supportsManagedNod
 		return false, errors.Wrap(iterErr, "adding outputs to current stack template")
 	}
 
-	if len(addResources) == 0 && len(addOutputs) == 0 {
+	newMappings.ForEach(func(k, v gjson.Result) bool {
+		return iterFunc(&addMappings, mappingsRootPath, currentMappings, k, v)
+	})
+	if iterErr != nil {
+		return false, errors.Wrap(iterErr, "adding mappings to current stack template")
+	}
+
+	if len(addResources) == 0 && len(addOutputs) == 0 && len(addMappings) == 0 {
 		logger.Success("all resources in cluster stack %q are up-to-date", name)
 		return false, nil
 	}

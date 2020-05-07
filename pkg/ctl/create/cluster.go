@@ -10,6 +10,7 @@ import (
 	"github.com/spf13/pflag"
 	"github.com/weaveworks/eksctl/pkg/eks"
 	"github.com/weaveworks/eksctl/pkg/ssh"
+	"github.com/weaveworks/eksctl/pkg/utils/kubectl"
 
 	api "github.com/weaveworks/eksctl/pkg/apis/eksctl.io/v1alpha5"
 	"github.com/weaveworks/eksctl/pkg/authconfigmap"
@@ -23,6 +24,12 @@ import (
 )
 
 func createClusterCmd(cmd *cmdutils.Cmd) {
+	createClusterCmdWithRunFunc(cmd, func(cmd *cmdutils.Cmd, ng *api.NodeGroup, params *cmdutils.CreateClusterCmdParams) error {
+		return doCreateCluster(cmd, ng, params)
+	})
+}
+
+func createClusterCmdWithRunFunc(cmd *cmdutils.Cmd, runFunc func(cmd *cmdutils.Cmd, ng *api.NodeGroup, params *cmdutils.CreateClusterCmdParams) error) {
 	cfg := api.NewClusterConfig()
 	ng := api.NewNodeGroup()
 	cmd.ClusterConfig = cfg
@@ -33,7 +40,7 @@ func createClusterCmd(cmd *cmdutils.Cmd) {
 
 	cmd.CobraCommand.RunE = func(_ *cobra.Command, args []string) error {
 		cmd.NameArg = cmdutils.GetNameArg(args)
-		return doCreateCluster(cmd, ng, params)
+		return runFunc(cmd, ng, params)
 	}
 
 	exampleClusterName := names.ForCluster("", "")
@@ -105,7 +112,7 @@ func doCreateCluster(cmd *cmdutils.Cmd, ng *api.NodeGroup, params *cmdutils.Crea
 	if cfg.Metadata.Version != api.DefaultVersion {
 		if !isValidVersion(cfg.Metadata.Version) {
 			if isDeprecatedVersion(cfg.Metadata.Version) {
-				return fmt.Errorf("invalid version, %s is now deprecated, supported values: %s\nsee also: https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html", cfg.Metadata.Version, strings.Join(api.SupportedVersions(), ", "))
+				return fmt.Errorf("invalid version, %s is no longer supported, supported values: %s\nsee also: https://docs.aws.amazon.com/eks/latest/userguide/kubernetes-versions.html", cfg.Metadata.Version, strings.Join(api.SupportedVersions(), ", "))
 			}
 			return fmt.Errorf("invalid version, supported values: %s", strings.Join(api.SupportedVersions(), ", "))
 		}
@@ -249,7 +256,7 @@ func doCreateCluster(cmd *cmdutils.Cmd, ng *api.NodeGroup, params *cmdutils.Crea
 
 	for _, ng := range cfg.NodeGroups {
 		// resolve AMI
-		if err := ctl.EnsureAMI(meta.Version, ng); err != nil {
+		if err := eks.EnsureAMI(ctl.Provider, meta.Version, ng); err != nil {
 			return err
 		}
 		logger.Info("nodegroup %q will use %q [%s/%s]", ng.Name, ng.AMI, ng.AMIFamily, cfg.Metadata.Version)
@@ -395,7 +402,7 @@ func doCreateCluster(cmd *cmdutils.Cmd, ng *api.NodeGroup, params *cmdutils.Crea
 		if err != nil {
 			return err
 		}
-		if err := utils.CheckAllCommands(params.KubeconfigPath, params.SetContext, kubeconfigContextName, env); err != nil {
+		if err := kubectl.CheckAllCommands(params.KubeconfigPath, params.SetContext, kubeconfigContextName, env); err != nil {
 			logger.Critical("%s\n", err.Error())
 			logger.Info("cluster should be functional despite missing (or misconfigured) client binaries")
 		}

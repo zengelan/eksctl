@@ -14,8 +14,9 @@ import (
 var internetCIDR = gfn.NewString("0.0.0.0/0")
 
 const (
-	cfnControlPlaneSGResource = "ControlPlaneSecurityGroup"
-	cfnSharedNodeSGResource   = "ClusterSharedNodeSecurityGroup"
+	cfnControlPlaneSGResource         = "ControlPlaneSecurityGroup"
+	cfnSharedNodeSGResource           = "ClusterSharedNodeSecurityGroup"
+	cfnIngressClusterToNodeSGResource = "IngressDefaultClusterToNodeSG"
 )
 
 func (c *ClusterResourceSet) addSubnets(refRT *gfn.Value, topology api.SubnetTopology, subnets map[string]api.Network) {
@@ -51,6 +52,7 @@ func (c *ClusterResourceSet) addSubnets(refRT *gfn.Value, topology api.SubnetTop
 				Key:   gfn.NewString("kubernetes.io/role/elb"),
 				Value: gfn.NewString("1"),
 			}}
+			subnet.MapPublicIpOnLaunch = gfn.True()
 		}
 		refSubnet := c.newResource("Subnet"+alias, subnet)
 		c.newResource("RouteTableAssociation"+alias, &gfn.AWSEC2SubnetRouteTableAssociation{
@@ -92,7 +94,7 @@ func (c *ClusterResourceSet) addResourcesForVPC() error {
 
 	if api.IsEnabled(c.spec.VPC.AutoAllocateIPv6) {
 		c.newResource("AutoAllocatedCIDRv6", &gfn.AWSEC2VPCCidrBlock{
-			VpcId: c.vpc,
+			VpcId:                       c.vpc,
 			AmazonProvidedIpv6CidrBlock: gfn.True(),
 		})
 	}
@@ -162,7 +164,9 @@ func (c *ClusterResourceSet) addOutputsForVPC() {
 		c.spec.VPC.ID = v
 		return nil
 	})
-	c.rs.defineOutputWithoutCollector(outputs.ClusterFeatureNATMode, c.spec.VPC.NAT.Gateway, false)
+	if c.spec.VPC.NAT != nil {
+		c.rs.defineOutputWithoutCollector(outputs.ClusterFeatureNATMode, c.spec.VPC.NAT.Gateway, false)
+	}
 	if refs, ok := c.subnets[api.SubnetTopologyPrivate]; ok {
 		c.rs.defineJoinedOutput(outputs.ClusterSubnetsPrivate, refs, true, func(v string) error {
 			return vpc.ImportSubnetsFromList(c.provider, c.spec, api.SubnetTopologyPrivate, strings.Split(v, ","))
@@ -218,7 +222,7 @@ func (c *ClusterResourceSet) addResourcesForSecurityGroups() {
 			// To enable communication between both managed and unmanaged nodegroups, this allows ingress traffic from
 			// the default cluster security group ID that EKS creates by default
 			// EKS attaches this to Managed Nodegroups by default, but we need to handle this for unmanaged nodegroups
-			c.newResource("IngressDefaultClusterToNodeSG", &gfn.AWSEC2SecurityGroupIngress{
+			c.newResource(cfnIngressClusterToNodeSGResource, &gfn.AWSEC2SecurityGroupIngress{
 				GroupId:               refClusterSharedNodeSG,
 				SourceSecurityGroupId: gfn.MakeFnGetAttString(makeAttrAccessor("ControlPlane", outputs.ClusterDefaultSecurityGroup)),
 				Description:           gfn.NewString("Allow managed and unmanaged nodes to communicate with each other (all ports)"),

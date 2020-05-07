@@ -103,6 +103,7 @@ managedNodeGroups:
 
   - name: managed-ng-2
     instanceType: t2.large
+    privateNetworking: true
     minSize: 2
     maxSize: 3
 ```
@@ -175,22 +176,22 @@ eksctl scale nodegroup --name=managed-ng-1 --cluster=managed-cluster --nodes=4
 EKS Managed Nodegroups are managed by AWS EKS and do not offer the same level of configuration as unmanaged nodegroups.
 The unsupported options are noted below.
 
-- No support for private networking (`nodeGroups[*].privateNetworking`).
 - Tags (`managedNodeGroups[*].tags`) in managed nodegroups apply to the EKS Nodegroup resource and do not propagate to
 the provisioned Autoscaling Group like in unmanaged nodegroups.
-- `iam.instanceProfileARN` and `iam.instanceRoleARN` are not supported for managed nodegroups.
+- `iam.instanceProfileARN` is not supported for managed nodegroups.
 - The `amiFamily` field supports only `AmazonLinux2`
 - `instancesDistribution` field is not supported
 - `volumeSize` is the only field supported for configuring volumes
 - Control over the node bootstrapping process and customization of the kubelet are not supported. This includes the
-following fields: `maxPodsPerNode`, `taints`, `targetGroupARNs`, `preBootstrapCommands`, `overrideBootstrapCommand`,
+following fields: `classicLoadBalancerNames`, `maxPodsPerNode`, `taints`, `targetGroupARNs`, `preBootstrapCommands`, `overrideBootstrapCommand`,
 `clusterDNS` and `kubeletExtraConfig`.
 
-### Known issues
-- For clusters upgraded to EKS 1.14 from a previous version, or clusters created with eksctl versions below `0.10.2`,
-managed nodegroups will not be able to communicate with unmanaged nodegroups. As a result, pods in a managed nodegroup
-will be unable to reach pods in an unmanaged nodegroup, and vice versa.
-As a temporary workaround for fixing this, add ingress rules to the shared security group and the default cluster
+### Note for eksctl versions below 0.12.0
+- For clusters upgraded from EKS 1.13 to EKS 1.14, managed nodegroups will not be able to communicate with unmanaged
+nodegroups. As a result, pods in a managed nodegroup will be unable to reach pods in an unmanaged
+nodegroup, and vice versa.
+To fix this, use eksctl 0.12.0 or above and run `eksctl update cluster`.
+To fix this manually, add ingress rules to the shared security group and the default cluster
 security group to allow traffic from each other. The shared security group and the default cluster security groups have
 the naming convention `eksctl-<cluster>-cluster-ClusterSharedNodeSecurityGroup-<id>` and
 `eks-cluster-sg-<cluster>-<id>-<id>` respectively.

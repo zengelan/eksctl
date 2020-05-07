@@ -19,7 +19,7 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 )
 
-func createFargateProfileWithRunFunc(cmd *cmdutils.Cmd, runFunc func(cmd *cmdutils.Cmd, options *fargate.CreateOptions) error) {
+func createFargateProfileWithRunFunc(cmd *cmdutils.Cmd, runFunc func(cmd *cmdutils.Cmd) error) {
 	cmd.ClusterConfig = api.NewClusterConfig()
 	cmd.SetDescription(
 		"fargateprofile",
@@ -32,14 +32,12 @@ func createFargateProfileWithRunFunc(cmd *cmdutils.Cmd, runFunc func(cmd *cmduti
 		if err := cmdutils.NewCreateFargateProfileLoader(cmd, options).Load(); err != nil {
 			return err
 		}
-		return runFunc(cmd, options)
+		return runFunc(cmd)
 	}
 }
 
 func createFargateProfile(cmd *cmdutils.Cmd) {
-	createFargateProfileWithRunFunc(cmd, func(cmd *cmdutils.Cmd, options *fargate.CreateOptions) error {
-		return doCreateFargateProfile(cmd, options)
-	})
+	createFargateProfileWithRunFunc(cmd, doCreateFargateProfile)
 }
 
 func configureCreateFargateProfileCmd(cmd *cmdutils.Cmd) *fargate.CreateOptions {
@@ -57,7 +55,7 @@ func configureCreateFargateProfileCmd(cmd *cmdutils.Cmd) *fargate.CreateOptions 
 	return &options
 }
 
-func doCreateFargateProfile(cmd *cmdutils.Cmd, options *fargate.CreateOptions) error {
+func doCreateFargateProfile(cmd *cmdutils.Cmd) error {
 	ctl, err := cmd.NewCtl()
 	if err != nil {
 		return err
@@ -76,6 +74,10 @@ func doCreateFargateProfile(cmd *cmdutils.Cmd, options *fargate.CreateOptions) e
 	}
 	if !supportsFargate {
 		return fmt.Errorf("Fargate is not supported for this cluster version. Please update the cluster to be at least eks.%d", fargate.MinPlatformVersion)
+	}
+
+	if err := ctl.LoadClusterVPC(cfg); err != nil {
+		return err
 	}
 
 	// Read back the default Fargate pod execution role ARN from CloudFormation:

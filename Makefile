@@ -42,12 +42,12 @@ godeps = $(shell $(call godeps_cmd,$(1)))
 
 .PHONY: build
 build: generate-always ## Build main binary
-	CGO_ENABLED=0 time go build -ldflags "-X $(version_pkg).gitCommit=$(git_commit) -X $(version_pkg).builtAt=$(built_at)" ./cmd/eksctl
+	CGO_ENABLED=0 time go build -ldflags "-X $(version_pkg).gitCommit=$(git_commit) -X $(version_pkg).buildDate=$(build_date)" ./cmd/eksctl
 
 # Build binaries for Linux, Windows and Mac and place them in dist/
 .PHONY: build-all
 build-all: generate-always
-	goreleaser --config=goreleaser-local.yaml --snapshot --skip-publish --rm-dist
+	goreleaser --config=.goreleaser-local.yaml --snapshot --skip-publish --rm-dist
 
 ##@ Testing & CI
 
@@ -77,7 +77,7 @@ endif
 
 .PHONY: lint
 lint: ## Run linter over the codebase
-	time "$(GOBIN)/gometalinter" ./pkg/... ./cmd/... ./integration/...
+	time "$(GOBIN)/golangci-lint" run
 
 .PHONY: test
 test:
@@ -88,19 +88,23 @@ test:
 
 .PHONY: unit-test
 unit-test: ## Run unit test only
-	CGO_ENABLED=0 time go test ./pkg/... ./cmd/... $(UNIT_TEST_ARGS)
+	CGO_ENABLED=0 time go test  -tags=release ./pkg/... ./cmd/... $(UNIT_TEST_ARGS)
 
 .PHONY: unit-test-race
 unit-test-race: ## Run unit test with race detection
 	CGO_ENABLED=1 time go test -race ./pkg/... ./cmd/... $(UNIT_TEST_ARGS)
 
 .PHONY: build-integration-test
-build-integration-test: $(all_generated_code) ## Build integration test binary
-	time go test -tags integration ./integration/ -c -o eksctl-integration-test
+build-integration-test: $(all_generated_code)
+	@# Compile integration test binary without running any.
+	@# Required as build failure aren't listed when running go build below. See also: https://github.com/golang/go/issues/15513
+	go test -tags integration -run=^$$ ./integration/...
+	@# Build integration test binary:
+	go build -tags integration -o ./eksctl-integration-test ./integration/main.go
 
 .PHONY: integration-test
 integration-test: build build-integration-test ## Run the integration tests (with cluster creation and cleanup)
-	cd integration; ../eksctl-integration-test -test.timeout 140m $(INTEGRATION_TEST_ARGS)
+	JUNIT_REPORT_DIR=$(git_toplevel)/test-results ./eksctl-integration-test $(INTEGRATION_TEST_ARGS)
 
 .PHONY: integration-test-container
 integration-test-container: eksctl-image ## Run the integration tests inside a Docker container
@@ -129,8 +133,8 @@ integration-test-dev: build-integration-test ## Run the integration tests withou
 	cd integration ; ../eksctl-integration-test -test.timeout 21m \
 		$(INTEGRATION_TEST_ARGS) \
 		-eksctl.cluster=$(TEST_CLUSTER) \
-		-eksctl.create=false \
-		-eksctl.delete=false \
+		-eksctl.skip.create=true \
+		-eksctl.skip.delete=true \
 		-eksctl.kubeconfig=$(HOME)/.kube/eksctl/clusters/$(TEST_CLUSTER)
 
 create-integration-test-dev-cluster: build ## Create a test cluster for use when developing integration tests
@@ -169,15 +173,59 @@ site/content/usage/20-schema.md: $(call godeps,cmd/schema/generate.go)
 
 deep_copy_helper_input = $(shell $(call godeps_cmd,./pkg/apis/...) | sed 's|$(generated_code_deep_copy_helper)||' )
 $(generated_code_deep_copy_helper): $(deep_copy_helper_input) .license-header ## Generate Kubernetes API helpers
-	time env GOPATH="$(gopath)" bash "$(gopath)/pkg/mod/k8s.io/code-generator@v0.0.0-20190831074504-732c9ca86353/generate-groups.sh" \
-	  deepcopy,defaulter _ ./pkg/apis eksctl.io:v1alpha5 --go-header-file .license-header --output-base="$(git_toplevel)" \
-	  || (cat .license-header ; cat $(generated_code_deep_copy_helper); exit 1)
+	./tools/update-codegen.sh
 
 $(generated_code_aws_sdk_mocks): $(call godeps,pkg/eks/mocks/mocks.go)
 	mkdir -p vendor/github.com/aws/
 	@# Hack for Mockery to find the dependencies handled by `go mod`
-	ln -sfn "$(gopath)/pkg/mod/github.com/weaveworks-experiments/aws-sdk-go@v1.25.14-0.20191128064856-d39dadebcc3f" vendor/github.com/aws/aws-sdk-go
+	ln -sfn "$(gopath)/pkg/mod/github.com/weaveworks/aws-sdk-go@v1.25.14-0.20191218135223-757eeed07291" vendor/github.com/aws/aws-sdk-go
 	time env GOBIN=$(GOBIN) go generate ./pkg/eks/mocks
+
+.PHONY: generate-kube-reserved
+generate-kube-reserved: ## Update instance list with respective specs
+	@cd ./pkg/nodebootstrap/ && go run reserved_generate.go
+
+##@ Release
+.PHONY: prepare-release
+prepare-release:
+	./tag-release.sh
+
+.PHONY: prepare-release-candidate
+prepare-release-candidate:
+	./tag-release-candidate.sh
+
+.PHONY: print-version
+print-version:
+	@go run pkg/version/generate/release_generate.go print-version
+
+.PHONY: upload-github
+upload-github:
+	@echo "Releasing version $(eksctl_version) in $(git_org)/$(git_repo)"
+	@echo "Check draft exists..." && github-release info --user $(git_org) --repo $(git_repo) --tag $(eksctl_version)
+	github-release upload --user $(git_org) --repo $(git_repo) --tag $(eksctl_version) --file dist/eksctl_Windows_amd64.zip --name eksctl_Windows_amd64.zip
+	github-release upload --user $(git_org) --repo $(git_repo) --tag $(eksctl_version) --file dist/eksctl_Darwin_amd64.tar.gz --name eksctl_Darwin_amd64.tar.gz
+	github-release upload --user $(git_org) --repo $(git_repo) --tag $(eksctl_version) --file dist/eksctl_Linux_amd64.tar.gz --name eksctl_Linux_amd64.tar.gz
+
+.PHONY: publish-github
+publish-github: upload-github
+	github-release publish --user $(git_org) --repo $(git_repo) --tag $(eksctl_version)
+
+.PHONY: publish-rc-github
+publish-rc-github: upload-github
+	github-release release --user $(git_org) --repo $(git_repo) --tag $(shell eksctl version) --pre-release
+
+.PHONY: publish-homebrew
+publish-homebrew:
+	@echo "Publishing to weaveworks/homebrew-tap"
+	git clone --depth 1 --branch master git@github.com:weaveworks/homebrew-tap.git
+	@go run tools/brew/update_formula.go \
+		-template tools/brew/formula.tmpl \
+		-outputPath homebrew-tap/Formula/$(git_repo).rb \
+		-version $(eksctl_version) \
+		-linux-url https://github.com/$(git_org)/$(git_repo)/releases/download/$(eksctl_version)/eksctl_Linux_amd64.tar.gz \
+		-mac-url https://github.com/$(git_org)/$(git_repo)/releases/download/$(eksctl_version)/eksctl_Darwin_amd64.tar.gz
+	cd homebrew-tap; git commit --message "Brew formula update for $(git_repo) version $(eksctl_version)" -- Formula/$(git_repo).rb
+	cd homebrew-tap; git push origin master
 
 ##@ Docker
 

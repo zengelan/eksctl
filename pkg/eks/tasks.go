@@ -4,10 +4,10 @@ import (
 	"github.com/kris-nova/logger"
 	"github.com/pkg/errors"
 	"github.com/weaveworks/eksctl/pkg/addons"
+	iamoidc "github.com/weaveworks/eksctl/pkg/iam/oidc"
 
 	api "github.com/weaveworks/eksctl/pkg/apis/eksctl.io/v1alpha5"
 	"github.com/weaveworks/eksctl/pkg/cfn/manager"
-	"github.com/weaveworks/eksctl/pkg/iam/oidc"
 	"github.com/weaveworks/eksctl/pkg/kubernetes"
 )
 
@@ -67,6 +67,15 @@ func (c *ClusterProvider) AppendExtraClusterConfigTasks(cfg *api.ClusterConfig, 
 		c.appendCreateTasksForIAMServiceAccounts(cfg, newTasks)
 	}
 	c.maybeAppendTasksForEndpointAccessUpdates(cfg, newTasks)
+
+	if len(cfg.VPC.PublicAccessCIDRs) > 0 {
+		newTasks.Append(&clusterConfigTask{
+			info: "update public access CIDRs",
+			spec: cfg,
+			call: c.UpdatePublicAccessCIDRs,
+		})
+	}
+
 	if installVPCController {
 		newTasks.Append(&vpcControllerTask{
 			info:            "install Windows VPC controller",

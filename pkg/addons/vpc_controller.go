@@ -181,9 +181,6 @@ func watchCSRApproval(csrClientSet v1beta1.CertificateSigningRequestInterface, c
 		}
 
 	}
-
-	return nil, errors.New("unexpected termination of loop")
-
 }
 
 func (v *VPCController) createCertSecrets(key, cert []byte) error {
@@ -288,12 +285,17 @@ func (v *VPCController) applyDeployment(manifests []byte) error {
 	if !ok {
 		return &typeAssertionError{&appsv1.Deployment{}, rawExtension.Object}
 	}
-	useRegionalImage(&deployment.Spec.Template, v.region)
+	if err := UseRegionalImage(&deployment.Spec.Template, v.region); err != nil {
+		return err
+	}
 	return v.applyRawResource(rawExtension.Object)
 }
 
 func (v *VPCController) applyRawResource(object runtime.Object) error {
 	rawResource, err := v.rawClient.NewRawResource(object)
+	if err != nil {
+		return err
+	}
 
 	switch newObject := object.(type) {
 	case *corev1.Service:
@@ -323,10 +325,6 @@ func (v *VPCController) applyRawResource(object runtime.Object) error {
 		}
 	}
 
-	if err != nil {
-		return err
-	}
-
 	msg, err := rawResource.CreateOrReplace(v.planMode)
 	if err != nil {
 		return err
@@ -351,13 +349,6 @@ func mustGenerateAsset(assetFunc assetFunc) []byte {
 		panic(&assetError{err})
 	}
 	return bytes
-}
-
-// TODO use this for other addons
-func useRegionalImage(spec *corev1.PodTemplateSpec, region string) {
-	imageFormat := spec.Spec.Containers[0].Image
-	regionalImage := fmt.Sprintf(imageFormat, api.EKSResourceAccountID(region), region)
-	spec.Spec.Containers[0].Image = regionalImage
 }
 
 func generateCertReq(service, namespace string) ([]byte, []byte, error) {

@@ -7,9 +7,11 @@ import (
 	"github.com/pkg/errors"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	"github.com/weaveworks/eksctl/pkg/cfn/manager"
 	"github.com/weaveworks/eksctl/pkg/eks"
 	"github.com/weaveworks/eksctl/pkg/ssh"
 	"github.com/weaveworks/eksctl/pkg/utils/names"
+	"github.com/weaveworks/eksctl/pkg/vpc"
 
 	api "github.com/weaveworks/eksctl/pkg/apis/eksctl.io/v1alpha5"
 	"github.com/weaveworks/eksctl/pkg/authconfigmap"
@@ -24,6 +26,12 @@ type createNodeGroupParams struct {
 }
 
 func createNodeGroupCmd(cmd *cmdutils.Cmd) {
+	createNodeGroupCmdWithRunFunc(cmd, func(cmd *cmdutils.Cmd, ng *api.NodeGroup, params createNodeGroupParams) error {
+		return doCreateNodeGroups(cmd, ng, params)
+	})
+}
+
+func createNodeGroupCmdWithRunFunc(cmd *cmdutils.Cmd, runFunc func(cmd *cmdutils.Cmd, ng *api.NodeGroup, params createNodeGroupParams) error) {
 	cfg := api.NewClusterConfig()
 	ng := api.NewNodeGroup()
 	cmd.ClusterConfig = cfg
@@ -36,18 +44,19 @@ func createNodeGroupCmd(cmd *cmdutils.Cmd) {
 
 	cmd.CobraCommand.RunE = func(_ *cobra.Command, args []string) error {
 		cmd.NameArg = cmdutils.GetNameArg(args)
-		return doCreateNodeGroups(cmd, ng, params)
+		return runFunc(cmd, ng, params)
 	}
 
 	exampleNodeGroupName := names.ForNodeGroup("", "")
 
 	cmd.FlagSetGroup.InFlagSet("General", func(fs *pflag.FlagSet) {
 		fs.StringVar(&cfg.Metadata.Name, "cluster", "", "name of the EKS cluster to add the nodegroup to")
+		fs.StringToStringVarP(&cfg.Metadata.Tags, "tags", "", map[string]string{}, `A list of KV pairs used to tag the AWS resources (e.g. "Owner=John Doe,Team=Some Team")`)
 		cmdutils.AddRegionFlag(fs, cmd.ProviderConfig)
 		cmdutils.AddVersionFlag(fs, cfg.Metadata, `for nodegroups "auto" and "latest" can be used to automatically inherit version from the control plane or force latest`)
 		cmdutils.AddConfigFileFlag(fs, &cmd.ClusterConfigFile)
 		cmdutils.AddNodeGroupFilterFlags(fs, &cmd.Include, &cmd.Exclude)
-		cmdutils.AddUpdateAuthConfigMap(fs, &params.updateAuthConfigMap, "Remove nodegroup IAM role from aws-auth configmap")
+		cmdutils.AddUpdateAuthConfigMap(fs, &params.updateAuthConfigMap, "Add nodegroup IAM role to aws-auth configmap")
 		cmdutils.AddTimeoutFlag(fs, &cmd.ProviderConfig.WaitTimeout)
 	})
 
@@ -116,9 +125,13 @@ func doCreateNodeGroups(cmd *cmdutils.Cmd, ng *api.NodeGroup, params createNodeG
 		return errors.New("Managed Nodegroups are not supported for this cluster version. Please update the cluster before adding managed nodegroups")
 	}
 
+	if err := eks.ValidateBottlerocketSupport(ctl.ControlPlaneVersion(), cmdutils.ToKubeNodeGroups(cfg)); err != nil {
+		return err
+	}
+
 	for _, ng := range cfg.NodeGroups {
 		// resolve AMI
-		if err := ctl.EnsureAMI(meta.Version, ng); err != nil {
+		if err := eks.EnsureAMI(ctl.Provider, meta.Version, ng); err != nil {
 			return err
 		}
 		logger.Info("nodegroup %q will use %q [%s/%s]", ng.Name, ng.AMI, ng.AMIFamily, cfg.Metadata.Version)
@@ -150,6 +163,10 @@ func doCreateNodeGroups(cmd *cmdutils.Cmd, ng *api.NodeGroup, params createNodeG
 		return errors.Wrap(err, "cluster compatibility check failed")
 	}
 
+	if err := vpc.ValidateLegacySubnetsForNodeGroups(cfg, ctl.Provider); err != nil {
+		return err
+	}
+
 	{
 		logFiltered()
 		logMsg := func(resource string, count int) {
@@ -163,9 +180,26 @@ func doCreateNodeGroups(cmd *cmdutils.Cmd, ng *api.NodeGroup, params createNodeG
 			logMsg("managed nodegroups", len(cfg.ManagedNodeGroups))
 		}
 
-		tasks := stackManager.NewTasksToCreateNodeGroups(cfg.NodeGroups, supportsManagedNodes)
+		tasks := &manager.TaskTree{
+			Parallel: false,
+		}
+		if supportsManagedNodes {
+			tasks.Append(stackManager.NewClusterCompatTask())
+		}
+
+		allNodeGroupTasks := &manager.TaskTree{
+			Parallel: true,
+		}
+		nodeGroupTasks := stackManager.NewTasksToCreateNodeGroups(cfg.NodeGroups, supportsManagedNodes)
+		if nodeGroupTasks.Len() > 0 {
+			allNodeGroupTasks.Append(nodeGroupTasks)
+		}
 		managedTasks := stackManager.NewManagedNodeGroupTask(cfg.ManagedNodeGroups)
-		tasks.Append(managedTasks)
+		if managedTasks.Len() > 0 {
+			allNodeGroupTasks.Append(managedTasks)
+		}
+
+		tasks.Append(allNodeGroupTasks)
 		logger.Info(tasks.Describe())
 		errs := tasks.DoAllSync()
 		if len(errs) > 0 {
@@ -178,7 +212,6 @@ func doCreateNodeGroups(cmd *cmdutils.Cmd, ng *api.NodeGroup, params createNodeG
 			}
 			return fmt.Errorf("failed to create nodegroups for cluster %q", cfg.Metadata.Name)
 		}
-
 	}
 
 	{ // post-creation action

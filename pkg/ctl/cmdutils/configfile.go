@@ -1,8 +1,11 @@
 package cmdutils
 
 import (
+	"encoding/csv"
 	"fmt"
+	"strings"
 
+	"github.com/pkg/errors"
 	"github.com/spf13/pflag"
 	"k8s.io/apimachinery/pkg/util/sets"
 
@@ -189,8 +192,10 @@ func NewCreateClusterLoader(cmd *Cmd, ngFilter *NodeGroupFilter, ng *api.NodeGro
 			*l.ClusterConfig.VPC.NAT.Gateway = api.ClusterSingleNAT
 		}
 
-		if l.ClusterConfig.VPC.ClusterEndpoints == nil {
-			l.ClusterConfig.VPC.ClusterEndpoints = api.ClusterEndpointAccessDefaults()
+		api.SetClusterEndpointAccessDefaults(l.ClusterConfig.VPC)
+
+		if !l.ClusterConfig.HasClusterEndpointAccess() {
+			return api.ErrClusterEndpointNoAccess
 		}
 
 		if l.ClusterConfig.HasAnySubnets() && len(l.ClusterConfig.AvailabilityZones) != 0 {
@@ -339,6 +344,7 @@ func makeManagedNodegroup(nodeGroup *api.NodeGroup) *api.ManagedNodeGroup {
 		Tags:              nodeGroup.Tags,
 		AMIFamily:         nodeGroup.AMIFamily,
 		VolumeSize:        nodeGroup.VolumeSize,
+		PrivateNetworking: nodeGroup.PrivateNetworking,
 		ScalingConfig: &api.ScalingConfig{
 			MinSize:         nodeGroup.MinSize,
 			MaxSize:         nodeGroup.MaxSize,
@@ -418,15 +424,32 @@ func NewUtilsEnableLoggingLoader(cmd *Cmd) ClusterConfigLoader {
 }
 
 // NewUtilsEnableEndpointAccessLoader will load config or use flags for 'eksctl utils vpc-cluster-api-access
-func NewUtilsEnableEndpointAccessLoader(cmd *Cmd) ClusterConfigLoader {
+func NewUtilsEnableEndpointAccessLoader(cmd *Cmd, privateAccess, publicAccess bool) ClusterConfigLoader {
 	l := newCommonClusterConfigLoader(cmd)
 
 	l.flagsIncompatibleWithConfigFile.Insert(
 		"private-access",
 		"public-access",
 	)
+	l.validateWithoutConfigFile = func() error {
+		if err := l.validateMetadataWithoutConfigFile(); err != nil {
+			return err
+		}
 
-	l.validateWithoutConfigFile = l.validateMetadataWithoutConfigFile
+		if flag := l.CobraCommand.Flag("private-access"); flag != nil && flag.Changed {
+			cmd.ClusterConfig.VPC.ClusterEndpoints.PrivateAccess = &privateAccess
+		} else {
+			cmd.ClusterConfig.VPC.ClusterEndpoints.PrivateAccess = nil
+		}
+
+		if flag := l.CobraCommand.Flag("public-access"); flag != nil && flag.Changed {
+			cmd.ClusterConfig.VPC.ClusterEndpoints.PublicAccess = &publicAccess
+		} else {
+			cmd.ClusterConfig.VPC.ClusterEndpoints.PublicAccess = nil
+		}
+
+		return nil
+	}
 
 	return l
 }
@@ -448,6 +471,41 @@ func NewUtilsAssociateIAMOIDCProviderLoader(cmd *Cmd) ClusterConfigLoader {
 	}
 
 	return l
+}
+
+// NewUtilsPublicAccessCIDRsLoader loads config or uses flags for `eksctl utils set-public-access-cidrs <cidrs>`
+func NewUtilsPublicAccessCIDRsLoader(cmd *Cmd) ClusterConfigLoader {
+	l := newCommonClusterConfigLoader(cmd)
+
+	l.validateWithConfigFile = func() error {
+		if cmd.NameArg != "" {
+			return fmt.Errorf("config file and CIDR list argument %s", IncompatibleFlags)
+		}
+		if l.ClusterConfig.VPC == nil || l.ClusterConfig.VPC.PublicAccessCIDRs == nil {
+			return errors.New("field vpc.publicAccessCIDRs is required")
+		}
+		return nil
+	}
+
+	l.validateWithoutConfigFile = func() error {
+		if cmd.NameArg == "" {
+			return errors.New("a comma-separated CIDR list is required")
+		}
+
+		cidrs, err := parseCIDRs(cmd.NameArg)
+		if err != nil {
+			return err
+		}
+		l.ClusterConfig.VPC.PublicAccessCIDRs = cidrs
+		return nil
+	}
+	return l
+}
+
+func parseCIDRs(arg string) ([]string, error) {
+	reader := strings.NewReader(arg)
+	csvReader := csv.NewReader(reader)
+	return csvReader.Read()
 }
 
 // NewCreateIAMServiceAccountLoader will laod config or use flags for 'eksctl create iamserviceaccount'
@@ -473,8 +531,16 @@ func NewCreateIAMServiceAccountLoader(cmd *Cmd, saFilter *IAMServiceAccountFilte
 
 		serviceAccount := l.ClusterConfig.IAM.ServiceAccounts[0]
 
+		if serviceAccount.Name != "" && l.NameArg != "" {
+			return ErrFlagAndArg("--name", serviceAccount.Name, l.NameArg)
+		}
+
+		if l.NameArg != "" {
+			serviceAccount.Name = l.NameArg
+		}
+
 		if serviceAccount.Name == "" {
-			return ErrMustBeSet(ClusterNameFlag(cmd))
+			return ErrMustBeSet("--name")
 		}
 
 		if len(serviceAccount.AttachPolicyARNs) == 0 {

@@ -1,16 +1,19 @@
 package builder_test
 
 import (
+	"bytes"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net"
 	"path/filepath"
 	"strings"
+	"text/template"
 
 	"github.com/aws/aws-sdk-go/aws"
 	cfn "github.com/aws/aws-sdk-go/service/cloudformation"
 	"github.com/aws/aws-sdk-go/service/ec2"
+	"github.com/pkg/errors"
 	"k8s.io/apimachinery/pkg/util/sets"
 
 	gfn "github.com/awslabs/goformation/cloudformation"
@@ -69,6 +72,7 @@ type Properties struct {
 
 	VPCZoneIdentifier interface{}
 
+	LoadBalancerNames                 []string
 	TargetGroupARNs                   []string
 	DesiredCapacity, MinSize, MaxSize string
 
@@ -106,6 +110,7 @@ type Properties struct {
 			OnDemandPercentageAboveBaseCapacity string
 			SpotMaxPrice                        string
 			SpotInstancePools                   string
+			SpotAllocationStrategy              string
 		}
 	}
 }
@@ -133,33 +138,74 @@ type Template struct {
 	Resources   map[string]struct{ Properties Properties }
 }
 
-func kubeconfigBody(authenticator string) string {
-	return `apiVersion: v1
+var kubeconfigTemplate = template.Must(template.New("kubeconfig").Parse(`apiVersion: v1
 clusters:
 - cluster:
     certificate-authority: /etc/eksctl/ca.crt
-    server: ` + endpoint + `
-  name: ` + clusterName + `.us-west-2.eksctl.io
+    server: {{.Endpoint}}
+  name: {{.ClusterDomain}}
 contexts:
 - context:
-    cluster: ` + clusterName + `.us-west-2.eksctl.io
-    user: kubelet@` + clusterName + `.us-west-2.eksctl.io
-  name: kubelet@` + clusterName + `.us-west-2.eksctl.io
-current-context: kubelet@` + clusterName + `.us-west-2.eksctl.io
+    cluster: {{.ClusterDomain}}
+    user: kubelet@{{.ClusterDomain}}
+  name: kubelet@{{.ClusterDomain}}
+current-context: kubelet@{{.ClusterDomain}}
 kind: Config
 preferences: {}
 users:
-- name: kubelet@` + clusterName + `.us-west-2.eksctl.io
+- name: kubelet@{{.ClusterDomain}}
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1alpha1
+      {{if eq .Authenticator "aws"}}
+      args:
+      - eks
+      - get-token
+      - --cluster-name
+      - {{.Cluster}}
+      - --region
+      - {{.Region}}
+      command: {{.Authenticator}}
+      env:
+      - name: AWS_STS_REGIONAL_ENDPOINTS
+        value: regional
+     {{else}}
       args:
       - token
       - -i
-      - ` + clusterName + `
-      command: ` + authenticator + `
-      env: null
-`
+      - {{.Cluster}}
+      command: {{.Authenticator}}
+      env:
+      - name: AWS_STS_REGIONAL_ENDPOINTS
+        value: regional
+      - name: AWS_DEFAULT_REGION
+        value: {{.Region}}
+     {{end}}
+`))
+
+func kubeconfigBody(authenticator string) string {
+	var out bytes.Buffer
+	region := "us-west-2"
+
+	err := kubeconfigTemplate.Execute(&out, struct {
+		Cluster       string
+		ClusterDomain string
+		Authenticator string
+		Region        string
+		Endpoint      string
+	}{
+		Cluster:       clusterName,
+		ClusterDomain: fmt.Sprintf("%s.%s.eksctl.io", clusterName, region),
+		Authenticator: authenticator,
+		Region:        region,
+		Endpoint:      endpoint,
+	})
+
+	if err != nil {
+		panic(errors.Wrap(err, "unexpected error while executing kubeconfig template"))
+	}
+
+	return out.String()
 }
 
 func testVPC() *api.ClusterVPC {
@@ -266,6 +312,17 @@ func newStackWithOutputs(outputs map[string]string) cfn.Stack {
 	return s
 }
 
+// completeKubeletConfig amends changes that nodebootstrap.makeKubeletConfigYAML() would do.
+func completeKubeletConfig(kubeletConfigAssetContent []byte, clusterDNS string) string {
+	return string(kubeletConfigAssetContent) +
+		"\n" +
+		"clusterDNS: [" + clusterDNS + "]\n" +
+		"kubeReserved:\n" +
+		"  cpu: 70m\n" +
+		"  ephemeral-storage: 1Gi\n" +
+		"  memory: 1843Mi\n"
+}
+
 var _ = Describe("CloudFormation template builder API", func() {
 	var (
 		cc   *cloudconfig.CloudConfig
@@ -368,7 +425,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 				}
 				p.MockEC2().On("DescribeSubnets", mock.MatchedBy(func(input *ec2.DescribeSubnetsInput) bool {
-					fmt.Fprintf(GinkgoWriter, "%s subnets = %#v\n", t, output)
+					_, _ = fmt.Fprintf(GinkgoWriter, "%s subnets = %#v\n", t, output)
 					return joinCompare(input, list)
 				})).Return(output, nil)
 			}
@@ -388,18 +445,17 @@ var _ = Describe("CloudFormation template builder API", func() {
 			Metadata: &api.ClusterMeta{
 				Region:  "us-west-2",
 				Name:    clusterName,
-				Version: "1.14",
+				Version: "1.15",
 			},
 			Status: &api.ClusterStatus{
 				Endpoint:                 endpoint,
 				CertificateAuthorityData: caCertData,
-				ARN: arn,
+				ARN:                      arn,
 			},
 			AvailabilityZones: testAZs,
 			VPC:               testVPC(),
 			IAM: &api.ClusterIAM{
-				ServiceRoleARN:             aws.String(arn),
-				FargatePodExecutionRoleARN: aws.String(fargatePodExecutionRoleARN),
+				ServiceRoleARN: aws.String(arn),
 			},
 			CloudWatch: &api.ClusterCloudWatch{
 				ClusterLogging: &api.ClusterCloudWatchLogging{},
@@ -450,12 +506,12 @@ var _ = Describe("CloudFormation template builder API", func() {
 		setSubnets(cfg)
 
 		sampleOutputs := map[string]string{
-			"SecurityGroup":            "sg-0b44c48bcba5b7362",
-			"SubnetsPublic":            subnetsPublic,
-			"SubnetsPrivate":           subnetsPrivate,
-			"VPC":                      vpcID,
-			"Endpoint":                 endpoint,
-			"CertificateAuthorityData": caCert,
+			"SecurityGroup":              "sg-0b44c48bcba5b7362",
+			"SubnetsPublic":              subnetsPublic,
+			"SubnetsPrivate":             subnetsPrivate,
+			"VPC":                        vpcID,
+			"Endpoint":                   endpoint,
+			"CertificateAuthorityData":   caCert,
 			"ARN":                        arn,
 			"ClusterStackName":           "",
 			"SharedNodeSecurityGroup":    "sg-shared",
@@ -756,6 +812,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 	Context("NodeGroupAutoScaling", func() {
 		cfg, ng := newClusterConfigAndNodegroup(true)
 
+		ng.ClassicLoadBalancerNames = []string{"clb-1", "clb-2"}
 		ng.TargetGroupARNs = []string{"tg-arn-1", "tg-arn-2"}
 
 		ng.MinSize = new(int)
@@ -781,12 +838,10 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			Expect(role.Path).To(Equal("/"))
 			Expect(role.RoleName).To(Equal("a-named-role"))
-			Expect(role.ManagedPolicyArns).To(HaveLen(3))
-			Expect(role.ManagedPolicyArns[0]).To(Equal("arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"))
-			Expect(role.ManagedPolicyArns[1]).To(Equal("arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"))
-			Expect(role.ManagedPolicyArns[2]).To(Equal("arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"))
+			Expect(role.ManagedPolicyArns).To(ConsistOf(makePolicyARNRef("AmazonEKSWorkerNodePolicy",
+				"AmazonEKS_CNI_Policy", "AmazonEC2ContainerRegistryReadOnly")...))
 
-			checkARPD([]string{"ec2.amazonaws.com"}, role.AssumeRolePolicyDocument)
+			checkARPD([]string{"EC2"}, role.AssumeRolePolicyDocument)
 
 			Expect(ngTemplate.Resources).To(HaveKey("NodeInstanceProfile"))
 
@@ -852,6 +907,15 @@ var _ = Describe("CloudFormation template builder API", func() {
 			Expect(ngProps.Tags).To(Equal(expectedTags))
 		})
 
+		It("should have classic load balancer names set", func() {
+			Expect(ngTemplate.Resources).To(HaveKey("NodeGroup"))
+			ng := ngTemplate.Resources["NodeGroup"]
+			Expect(ng).ToNot(BeNil())
+			Expect(ng.Properties).ToNot(BeNil())
+
+			Expect(ng.Properties.LoadBalancerNames).To(Equal([]string{"clb-1", "clb-2"}))
+		})
+
 		It("should have target groups ARNs set", func() {
 			Expect(ngTemplate.Resources).To(HaveKey("NodeGroup"))
 			ng := ngTemplate.Resources["NodeGroup"]
@@ -893,7 +957,9 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			Expect(policy1.PolicyDocument.Statement).To(HaveLen(1))
 			Expect(policy1.PolicyDocument.Statement[0].Effect).To(Equal("Allow"))
-			Expect(policy1.PolicyDocument.Statement[0].Resource).To(Equal("arn:aws:route53:::hostedzone/*"))
+			Expect(policy1.PolicyDocument.Statement[0].Resource).To(Equal(map[string]interface{}{
+				"Fn::Sub": "arn:${AWS::Partition}:route53:::hostedzone/*",
+			}))
 			Expect(policy1.PolicyDocument.Statement[0].Action).To(Equal([]string{
 				"route53:ChangeResourceRecordSets",
 			}))
@@ -966,7 +1032,9 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			Expect(policy1.PolicyDocument.Statement).To(HaveLen(1))
 			Expect(policy1.PolicyDocument.Statement[0].Effect).To(Equal("Allow"))
-			Expect(policy1.PolicyDocument.Statement[0].Resource).To(Equal("arn:aws:route53:::hostedzone/*"))
+			Expect(policy1.PolicyDocument.Statement[0].Resource).To(Equal(map[string]interface{}{
+				"Fn::Sub": "arn:${AWS::Partition}:route53:::hostedzone/*",
+			}))
 			Expect(policy1.PolicyDocument.Statement[0].Action).To(Equal([]string{
 				"route53:ChangeResourceRecordSets",
 			}))
@@ -996,7 +1064,9 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			Expect(policy3.PolicyDocument.Statement).To(HaveLen(1))
 			Expect(policy3.PolicyDocument.Statement[0].Effect).To(Equal("Allow"))
-			Expect(policy3.PolicyDocument.Statement[0].Resource).To(Equal("arn:aws:route53:::change/*"))
+			Expect(policy3.PolicyDocument.Statement[0].Resource).To(Equal(map[string]interface{}{
+				"Fn::Sub": "arn:${AWS::Partition}:route53:::change/*",
+			}))
 			Expect(policy3.PolicyDocument.Statement[0].Action).To(Equal([]string{
 				"route53:GetChange",
 			}))
@@ -1143,11 +1213,8 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			role := ngTemplate.Resources["NodeInstanceRole"].Properties
 
-			Expect(role.ManagedPolicyArns).To(HaveLen(4))
-			Expect(role.ManagedPolicyArns[0]).To(Equal("arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy"))
-			Expect(role.ManagedPolicyArns[1]).To(Equal("arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy"))
-			Expect(role.ManagedPolicyArns[2]).To(Equal("arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly"))
-			Expect(role.ManagedPolicyArns[3]).To(Equal("arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy"))
+			Expect(role.ManagedPolicyArns).To(ConsistOf(makePolicyARNRef("AmazonEKSWorkerNodePolicy",
+				"AmazonEKS_CNI_Policy", "AmazonEC2ContainerRegistryReadOnly", "CloudWatchAgentServerPolicy")))
 		})
 	})
 
@@ -1182,11 +1249,14 @@ var _ = Describe("CloudFormation template builder API", func() {
 				"ec2:DeleteSnapshot",
 				"ec2:DeleteTags",
 				"ec2:DeleteVolume",
+				"ec2:DescribeAvailabilityZones",
 				"ec2:DescribeInstances",
 				"ec2:DescribeSnapshots",
 				"ec2:DescribeTags",
 				"ec2:DescribeVolumes",
+				"ec2:DescribeVolumesModifications",
 				"ec2:DetachVolume",
+				"ec2:ModifyVolume",
 			}))
 
 			Expect(ngTemplate.Resources).ToNot(HaveKey("PolicyAutoScaling"))
@@ -1490,7 +1560,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			Expect(ltd.NetworkInterfaces).To(HaveLen(1))
 			Expect(ltd.NetworkInterfaces[0].DeviceIndex).To(Equal(0))
-			Expect(ltd.NetworkInterfaces[0].AssociatePublicIpAddress).To(BeTrue())
+			Expect(ltd.NetworkInterfaces[0].AssociatePublicIpAddress).To(BeFalse())
 
 			Expect(ngTemplate.Resources["SSHIPv4"].Properties.CidrIp).To(Equal("0.0.0.0/0"))
 			Expect(ngTemplate.Resources["SSHIPv4"].Properties.FromPort).To(Equal(22))
@@ -1569,7 +1639,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 			refSubnets := []interface{}{
 				cfg.VPC.Subnets.Public["us-west-2a"].ID,
 			}
-			Expect(x).To((Equal(refSubnets)))
+			Expect(x).To(Equal(refSubnets))
 
 			ltd := getLaunchTemplateData(ngTemplate)
 
@@ -1577,7 +1647,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			Expect(ltd.NetworkInterfaces).To(HaveLen(1))
 			Expect(ltd.NetworkInterfaces[0].DeviceIndex).To(Equal(0))
-			Expect(ltd.NetworkInterfaces[0].AssociatePublicIpAddress).To(BeTrue())
+			Expect(ltd.NetworkInterfaces[0].AssociatePublicIpAddress).To(BeFalse())
 
 			Expect(ngTemplate.Resources).ToNot(HaveKey("SSHIPv4"))
 
@@ -1694,14 +1764,11 @@ var _ = Describe("CloudFormation template builder API", func() {
 			kubeconfig := getFile(cc, "/etc/eksctl/kubeconfig.yaml")
 			Expect(kubeconfig).ToNot(BeNil())
 			Expect(kubeconfig.Permissions).To(Equal("0644"))
-			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws-iam-authenticator")))
+			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws")))
 
 			kubeletConfigAssetContent, err := nodebootstrap.Asset("kubelet.yaml")
 			Expect(err).ToNot(HaveOccurred())
-
-			kubeletConfigAssetContentString := string(kubeletConfigAssetContent) +
-				"\n" +
-				"clusterDNS: [10.100.0.10]\n"
+			kubeletConfigAssetContentString := completeKubeletConfig(kubeletConfigAssetContent, "10.100.0.10")
 
 			kubeletConfig := getFile(cc, "/etc/eksctl/kubelet.yaml")
 			Expect(kubeletConfig).ToNot(BeNil())
@@ -1760,7 +1827,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 			kubeconfig := getFile(cc, "/etc/eksctl/kubeconfig.yaml")
 			Expect(kubeconfig).ToNot(BeNil())
 			Expect(kubeconfig.Permissions).To(Equal("0644"))
-			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws-iam-authenticator")))
+			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws")))
 
 			ca := getFile(cc, "/etc/eksctl/ca.crt")
 			Expect(ca).ToNot(BeNil())
@@ -1819,7 +1886,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 			kubeconfig := getFile(cc, "/etc/eksctl/kubeconfig.yaml")
 			Expect(kubeconfig).ToNot(BeNil())
 			Expect(kubeconfig.Permissions).To(Equal("0644"))
-			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws-iam-authenticator")))
+			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws")))
 
 			ca := getFile(cc, "/etc/eksctl/ca.crt")
 			Expect(ca).ToNot(BeNil())
@@ -1876,7 +1943,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 			kubeconfig := getFile(cc, "/etc/eksctl/kubeconfig.yaml")
 			Expect(kubeconfig).ToNot(BeNil())
 			Expect(kubeconfig.Permissions).To(Equal("0644"))
-			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws-iam-authenticator")))
+			Expect(kubeconfig.Content).To(MatchYAML(kubeconfigBody("aws")))
 
 			ca := getFile(cc, "/etc/eksctl/ca.crt")
 			Expect(ca).ToNot(BeNil())
@@ -1940,10 +2007,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 			kubeletConfigAssetContent, err := nodebootstrap.Asset("kubelet.yaml")
 			Expect(err).ToNot(HaveOccurred())
-
-			kubeletConfigAssetContentString := string(kubeletConfigAssetContent) +
-				"\n" +
-				"clusterDNS: [172.20.0.10]\n"
+			kubeletConfigAssetContentString := completeKubeletConfig(kubeletConfigAssetContent, "172.20.0.10")
 
 			kubeletConfig := getFile(cc, "/etc/eksctl/kubelet.yaml")
 			Expect(kubeletConfig).ToNot(BeNil())
@@ -2151,6 +2215,33 @@ var _ = Describe("CloudFormation template builder API", func() {
 		})
 	})
 
+	Context("with Fargate profiles", func() {
+		cfg, ng := newClusterConfigAndNodegroup(true)
+		name := "test-fargate-profile"
+		cfg.Metadata.Name = name
+		cfg.FargateProfiles = []*api.FargateProfile{
+			// default fargate profile
+			{
+				Name: "fp-default",
+				Selectors: []api.FargateProfileSelector{
+					{Namespace: "default"},
+					{Namespace: "kube-system"},
+				},
+			},
+		}
+		build(cfg, fmt.Sprintf("eksctl-%s-cluster", name), ng)
+		roundtrip()
+
+		It("should have the Fargate pod execution role", func() {
+			Expect(clusterTemplate.Resources).To(HaveKey("ControlPlane"))
+			Expect(clusterTemplate.Resources).To(HaveKey("ServiceRole"))
+			Expect(clusterTemplate.Resources).To(HaveKey("PolicyNLB"))
+			Expect(clusterTemplate.Resources).To(HaveKey("PolicyCloudWatchMetrics"))
+			Expect(clusterTemplate.Resources).To(HaveKey("FargatePodExecutionRole"))
+			Expect(clusterTemplate.Resources).To(HaveLen(5))
+		})
+	})
+
 	Context("without VPC and IAM", func() {
 		cfg, ng := newClusterConfigAndNodegroup(true)
 
@@ -2166,10 +2257,9 @@ var _ = Describe("CloudFormation template builder API", func() {
 
 		roundtrip()
 
-		It("should only have EKS and Fargate resources", func() {
+		It("should only have EKS resources", func() {
 			Expect(clusterTemplate.Resources).To(HaveKey("ControlPlane"))
-			Expect(clusterTemplate.Resources).To(HaveKey("FargatePodExecutionRole"))
-			Expect(clusterTemplate.Resources).To(HaveLen(2))
+			Expect(clusterTemplate.Resources).To(HaveLen(1))
 
 			cp := clusterTemplate.Resources["ControlPlane"].Properties
 
@@ -2197,20 +2287,19 @@ var _ = Describe("CloudFormation template builder API", func() {
 		It("should have EKS and IAM resources", func() {
 			Expect(clusterTemplate.Resources).To(HaveKey("ControlPlane"))
 			Expect(clusterTemplate.Resources).To(HaveKey("ServiceRole"))
-			Expect(clusterTemplate.Resources).To(HaveKey("FargatePodExecutionRole"))
 			Expect(clusterTemplate.Resources).To(HaveKey("PolicyNLB"))
 			Expect(clusterTemplate.Resources).To(HaveKey("PolicyCloudWatchMetrics"))
-			Expect(clusterTemplate.Resources).To(HaveLen(5))
+			Expect(clusterTemplate.Resources).To(HaveLen(4))
 		})
 
 		It("should have correct own IAM resources", func() {
 			Expect(clusterTemplate.Resources["ServiceRole"].Properties).ToNot(BeNil())
-			Expect(clusterTemplate.Resources["ServiceRole"].Properties.ManagedPolicyArns).To(Equal([]interface{}{
-				"arn:aws:iam::aws:policy/AmazonEKSServicePolicy",
-				"arn:aws:iam::aws:policy/AmazonEKSClusterPolicy",
-			}))
 
-			checkARPD([]string{"eks.amazonaws.com", "eks-fargate-pods.amazonaws.com"}, clusterTemplate.Resources["ServiceRole"].Properties.AssumeRolePolicyDocument)
+			Expect(clusterTemplate.Resources["ServiceRole"].Properties.ManagedPolicyArns).To(Equal(
+				makePolicyARNRef("AmazonEKSClusterPolicy")),
+			)
+
+			checkARPD([]string{"EKS", "EKSFargatePods"}, clusterTemplate.Resources["ServiceRole"].Properties.AssumeRolePolicyDocument)
 
 			policy1 := clusterTemplate.Resources["PolicyNLB"].Properties
 
@@ -2296,7 +2385,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 				}
 			}
 
-			Expect(len(clusterTemplate.Resources)).To(Equal(33))
+			Expect(len(clusterTemplate.Resources)).To(Equal(32))
 		})
 
 		It("should use own VPC and subnets", func() {
@@ -2391,7 +2480,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 				}
 			}
 
-			Expect(len(clusterTemplate.Resources)).To(Equal(40))
+			Expect(len(clusterTemplate.Resources)).To(Equal(39))
 		})
 
 		It("should use own VPC and subnets", func() {
@@ -2468,7 +2557,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 				Expect(clusterTemplate.Resources).To(HaveKey("RouteTableAssociationPrivate" + region + zone))
 			}
 
-			Expect(len(clusterTemplate.Resources)).To(Equal(37))
+			Expect(len(clusterTemplate.Resources)).To(Equal(36))
 		})
 
 		It("should route Internet traffic from private subnets through their corresponding NAT gateways", func() {
@@ -2514,7 +2603,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 				Expect(clusterTemplate.Resources).To(HaveKey("RouteTableAssociationPrivate" + region + zone))
 			}
 
-			Expect(len(clusterTemplate.Resources)).To(Equal(33))
+			Expect(len(clusterTemplate.Resources)).To(Equal(32))
 		})
 
 		It("should route Internet traffic from private subnets through the single NAT gateway", func() {
@@ -2557,7 +2646,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 				Expect(clusterTemplate.Resources).To(HaveKey("RouteTableAssociationPrivate" + region + zone))
 			}
 
-			Expect(len(clusterTemplate.Resources)).To(Equal(28))
+			Expect(len(clusterTemplate.Resources)).To(Equal(27))
 
 		})
 
@@ -2578,6 +2667,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 		baseCap := 40
 		percentageOnDemand := 20
 		pools := 3
+		spotAllocationStrategy := "lowest-price"
 		ng.InstanceType = "mixed"
 		ng.InstancesDistribution = &api.NodeGroupInstancesDistribution{
 			MaxPrice:                            &maxSpotPrice,
@@ -2585,6 +2675,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 			OnDemandBaseCapacity:                &baseCap,
 			OnDemandPercentageAboveBaseCapacity: &percentageOnDemand,
 			SpotInstancePools:                   &pools,
+			SpotAllocationStrategy:              &spotAllocationStrategy,
 		}
 
 		zero := 0
@@ -2617,6 +2708,7 @@ var _ = Describe("CloudFormation template builder API", func() {
 			Expect(nodeGroupProperties.MixedInstancesPolicy.InstancesDistribution.OnDemandPercentageAboveBaseCapacity).To(Equal("20"))
 			Expect(nodeGroupProperties.MixedInstancesPolicy.InstancesDistribution.SpotInstancePools).To(Equal("3"))
 			Expect(nodeGroupProperties.MixedInstancesPolicy.InstancesDistribution.SpotMaxPrice).To(Equal("0.045000"))
+			Expect(nodeGroupProperties.MixedInstancesPolicy.InstancesDistribution.SpotAllocationStrategy).To(Equal("lowest-price"))
 
 		})
 	})
@@ -2665,7 +2757,11 @@ func getLaunchTemplateData(obj *Template) LaunchTemplateData {
 }
 
 func checkARPD(services []string, arpd interface{}) {
-	servicesJSON, err := json.Marshal(services)
+	var serviceRefs []*gfn.Value
+	for _, service := range services {
+		serviceRefs = append(serviceRefs, MakeServiceRef(service))
+	}
+	servicesJSON, err := json.Marshal(serviceRefs)
 	Expect(err).ToNot(HaveOccurred())
 
 	expectedARPD := `{
@@ -2680,4 +2776,14 @@ func checkARPD(services []string, arpd interface{}) {
 	}`
 	actualARPD, _ := json.Marshal(arpd)
 	Expect(actualARPD).To(MatchJSON([]byte(expectedARPD)))
+}
+
+func makePolicyARNRef(policies ...string) []interface{} {
+	var values []interface{}
+	for _, p := range policies {
+		values = append(values, map[string]interface{}{
+			"Fn::Sub": "arn:${AWS::Partition}:iam::aws:policy/" + p,
+		})
+	}
+	return values
 }

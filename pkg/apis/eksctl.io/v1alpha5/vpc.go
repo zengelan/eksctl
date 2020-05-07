@@ -31,6 +31,8 @@ type (
 		NAT *ClusterNAT `json:"nat,omitempty"`
 		// +optional
 		ClusterEndpoints *ClusterEndpoints `json:"clusterEndpoints,omitempty"`
+		// +optional
+		PublicAccessCIDRs []string `json:"publicAccessCIDRs,omitempty"`
 	}
 	// ClusterSubnets holds private and public subnets
 	ClusterSubnets struct {
@@ -53,8 +55,8 @@ type (
 
 	// ClusterEndpoints holds cluster api server endpoint access information
 	ClusterEndpoints struct {
-		PrivateAccess *bool `json:"privateAccess,omitempty,false"`
-		PublicAccess  *bool `json:"publicAccess,omitempty,true"`
+		PrivateAccess *bool `json:"privateAccess,omitempty"`
+		PublicAccess  *bool `json:"publicAccess,omitempty"`
 	}
 )
 
@@ -237,4 +239,11 @@ func (c *ClusterConfig) HasClusterEndpointAccess() bool {
 		return hasPublicAccess || hasPrivateAccess
 	}
 	return true
+}
+
+func (c *ClusterConfig) HasPrivateEndpointAccess() bool {
+	return c.VPC != nil &&
+		c.VPC.ClusterEndpoints != nil &&
+		c.VPC.ClusterEndpoints.PrivateAccess != nil &&
+		*c.VPC.ClusterEndpoints.PrivateAccess
 }

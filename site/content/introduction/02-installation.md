@@ -9,7 +9,7 @@ url: introduction/installation
 To download the latest release, run:
 
 ```
-curl --silent --location "https://github.com/weaveworks/eksctl/releases/download/latest_release/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
+curl --silent --location "https://github.com/weaveworks/eksctl/releases/latest/download/eksctl_$(uname -s)_amd64.tar.gz" | tar xz -C /tmp
 sudo mv /tmp/eksctl /usr/local/bin
 ```
 
@@ -18,6 +18,12 @@ Alternatively, macOS users can use [Homebrew](https://brew.sh):
 ```
 brew tap weaveworks/tap
 brew install weaveworks/tap/eksctl
+```
+
+or [MacPorts](https://www.macports.org):
+
+```
+port install eksctl
 ```
 
 and Windows users can use [chocolatey](https://chocolatey.org):
@@ -36,13 +42,15 @@ You will also need [AWS IAM Authenticator for Kubernetes](https://github.com/kub
 
 ### Shell Completion
 
+#### Bash
 To enable bash completion, run the following, or put it in `~/.bashrc` or `~/.profile`:
 
 ```
 . <(eksctl completion bash)
 ```
 
-Or for zsh, run:
+#### Zsh
+For zsh completion, please run:
 
 ```
 mkdir -p ~/.zsh/completion/
@@ -63,3 +71,11 @@ compinit
 ```
 
 To make the above persistent, run the first two lines, and put the above in `~/.zshrc`.
+
+#### Fish
+The below commands can be used for fish auto completion:
+
+```
+mkdir -p ~/.config/fish/completions
+eksctl completion fish > ~/.config/fish/completions/eksctl.fish
+```
